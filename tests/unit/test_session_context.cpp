@@ -140,7 +140,7 @@ TEST(SessionContext, RoundTripsBoundedDisplayRequests) {
 TEST(SessionContext, RejectsMalformedDisplayRequests) {
   EXPECT_TRUE(session::display_request_message(
     {session::display_request_t::action_t::acquire,
-     "single", "1280x720", {}, 1000}
+     "single", "1280x721", {}, 1000}
   ).empty());
   EXPECT_TRUE(session::display_request_message(
     {session::display_request_t::action_t::acquire,
@@ -183,7 +183,7 @@ TEST(SessionContext, RoundTripsTemporaryRuntimeDisplayState) {
   truncated.pop_back();
   EXPECT_FALSE(session::parse_runtime_display_state(truncated));
   EXPECT_TRUE(session::runtime_display_state_message(
-    {"single", "1280x1024", {}, 1000}
+    {"single", "1280x1023", {}, 1000}
   ).empty());
 }
 
