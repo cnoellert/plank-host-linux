@@ -31,6 +31,7 @@ namespace plank::topology {
   constexpr std::uint32_t feature_authenticated_desktop_stage = 0x20000;
   constexpr std::uint32_t feature_worker_instance = 0x40000;
   constexpr std::uint32_t feature_matched_display_modes = 0x400000;
+  constexpr std::uint32_t feature_matched_primary_output = 0x800000;
   constexpr std::uint32_t feature_flags =
     feature_output_topology |
     feature_selected_output |
@@ -51,7 +52,14 @@ namespace plank::topology {
     feature_desktop_handoff_notice |
     feature_authenticated_desktop_stage |
     feature_worker_instance |
-    feature_matched_display_modes;
+    feature_matched_display_modes |
+    feature_matched_primary_output;
+
+  /** @brief Validate an optional primary index in left-to-right display order. */
+  constexpr bool valid_primary_output(std::string_view layout, int primary) {
+    return primary == -1 || (primary == 0 && (layout == "single" || layout == "dual-horizontal")) ||
+      (primary == 1 && layout == "dual-horizontal");
+  }
 
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {
     return mtu >= 1200 && mtu <= 65527;

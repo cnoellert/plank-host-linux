@@ -699,6 +699,15 @@ namespace nvhttp {
     });
 
     const auto live_layout = live_display_layout(outputs);
+    if (!plank::topology::valid_primary_output(session.host_layout, session.primary_output) ||
+        (session.primary_output >= 0 &&
+         (live_layout.startup_kind != "physical" ||
+          !(session.plank_feature_flags & plank::topology::feature_matched_primary_output) ||
+          !(session.plank_feature_flags & plank::topology::feature_matched_display_modes)))) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Invalid or unnegotiated primary display binding");
+      return false;
+    }
     if (!plank::topology::layout_allowed_by_startup_layout(
           session.host_layout, live_layout.startup_kind
         )) {
@@ -731,11 +740,15 @@ namespace nvhttp {
       tree.put("root.<xmlattr>.status_message", "Invalid PLANK host-layout binding");
       return false;
     }
-    if (validation == plank::topology::layout_error::mismatch) {
+    const bool primary_mismatch = session.primary_output >= 0 &&
+      (static_cast<std::size_t>(session.primary_output) >= ordered_outputs.size() ||
+       !ordered_outputs[session.primary_output].get().primary);
+    if (validation == plank::topology::layout_error::mismatch ||
+        (validation == plank::topology::layout_error::none && primary_mismatch)) {
       const auto transition = plank::session::request_display_transition({
         plank::session::display_request_t::action_t::acquire,
         session.host_layout, session.virtual_mode_1, session.virtual_mode_2,
-        authenticated_uid
+        authenticated_uid, session.primary_output
       });
       if (transition == plank::session::display_request_status::submitted) {
         tree.put("root.<xmlattr>.status_code", 425);
@@ -1091,6 +1104,9 @@ namespace nvhttp {
     launch_session->host_layout = get_arg(args, "plankHostLayout", "");
     launch_session->virtual_mode_1 = get_arg(args, "plankVirtualMode1", "");
     launch_session->virtual_mode_2 = get_arg(args, "plankVirtualMode2", "");
+    const auto primary_output = get_arg(args, "plankPrimaryOutput", "");
+    launch_session->primary_output = primary_output.empty() ? -1 :
+      primary_output == "0" ? 0 : primary_output == "1" ? 1 : -2;
     launch_session->capture_source = get_arg(args, "plankCaptureSource", "");
     launch_session->encoder_backend = get_arg(args, "plankEncoderBackend", "");
     launch_session->encoding_mode = get_arg(args, "plankEncodingMode", "");

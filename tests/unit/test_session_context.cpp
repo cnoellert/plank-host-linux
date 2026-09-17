@@ -203,3 +203,19 @@ TEST(SessionContext, ReadsSecondaryVisibilityFromOwnedOverlay) {
                  "# foreign configuration\nOption \"MetaModes\" \"DFP-2: NULL\"\n")
                  .has_value());
 }
+
+TEST(SessionContext, RoundTripsMatchedPrimaryAndRejectsInvalidIndices) {
+  session::display_request_t request {session::display_request_t::action_t::acquire,
+    "dual-horizontal", "2056x1286", "2560x1440", 1000, 1};
+  const auto parsed = session::parse_display_request(session::display_request_message(request));
+  ASSERT_TRUE(parsed);
+  EXPECT_EQ(parsed->primary_output, 1);
+  for (int invalid : {-2, 2, 100}) {
+    request.primary_output = invalid;
+    EXPECT_TRUE(session::display_request_message(request).empty());
+  }
+  request.primary_output = 1;
+  request.layout = "single";
+  request.mode_2.clear();
+  EXPECT_TRUE(session::display_request_message(request).empty());
+}

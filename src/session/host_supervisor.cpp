@@ -85,6 +85,7 @@ namespace {
   struct physical_snapshot_t {
     std::string assignment;
     std::vector<physical_output_t> outputs;
+    std::string primary_output;  ///< Saved XRandR primary property, including inactive outputs.
   };
 
   struct physical_display_lease_t {
@@ -696,18 +697,31 @@ namespace {
       nvidia_settings_path, {"--query", "CurrentMetaMode", "--terse"},
       std::chrono::seconds {10}, account, environment
     );
-    return response ? parse_current_metamode(*response) : std::nullopt;
+    auto snapshot = response ? parse_current_metamode(*response) : std::nullopt;
+    if (!snapshot) return std::nullopt;
+    const auto primary = run_bounded_user_command_capture(
+      display_match_path, {"primary"}, std::chrono::seconds {10}, account, environment
+    );
+    if (!primary) return std::nullopt;
+    snapshot->primary_output = std::string {trim_view(*primary)};
+    if (!std::regex_match(snapshot->primary_output, std::regex {"[A-Za-z0-9_-]{1,64}"})) {
+      return std::nullopt;
+    }
+    return snapshot;
   }
 
   bool assign_metamode(
     std::string_view assignment,
     const account_t &account,
-    const plank::session::environment_t &environment
+    const plank::session::environment_t &environment,
+    std::string_view primary_output = "keep"
   ) {
+    // NVIDIA may return zero after rejecting an assignment. The helper reads
+    // the mode and primary property back before declaring restoration complete.
     return !assignment.empty() && run_bounded_user_command(
-      nvidia_settings_path,
-      {"--assign", "CurrentMetaMode=" + std::string {assignment}},
-      std::chrono::seconds {10}, account, environment
+      display_match_path,
+      {"restore", std::string {assignment}, std::string {primary_output}},
+      std::chrono::seconds {25}, account, environment
     );
   }
 
@@ -776,12 +790,13 @@ namespace {
     lease.mode_token = std::to_string(getpid()) + "-" + std::to_string(
       std::chrono::steady_clock::now().time_since_epoch().count()
     );
-    std::vector<std::string> arguments {"apply", lease.mode_token, lease.request.mode_1};
+    std::vector<std::string> arguments {"apply", lease.mode_token,
+      std::to_string(lease.request.primary_output), lease.request.mode_1};
     if (!lease.request.mode_2.empty()) arguments.push_back(lease.request.mode_2);
     if (!run_bounded_user_command(display_match_path, arguments,
           std::chrono::seconds {45}, *account, environment)) {
       // Also recover after helper timeout/termination, where Python cannot unwind.
-      if (assign_metamode(snapshot->assignment, *account, environment)) {
+      if (assign_metamode(snapshot->assignment, *account, environment, snapshot->primary_output)) {
         run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
           std::chrono::seconds {15}, *account, environment);
       }
@@ -792,7 +807,7 @@ namespace {
           lease.request.layout, lease.request.mode_1, lease.request.mode_2,
           lease.uid
         })) {
-      if (assign_metamode(snapshot->assignment, *account, environment)) {
+      if (assign_metamode(snapshot->assignment, *account, environment, snapshot->primary_output)) {
         run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
           std::chrono::seconds {15}, *account, environment);
       }
@@ -812,7 +827,7 @@ namespace {
   ) {
     const auto account = account_for_uid(session.uid);
     if (!account) return false;
-    if (assign_metamode(lease.snapshot.assignment, *account, environment)) {
+    if (assign_metamode(lease.snapshot.assignment, *account, environment, lease.snapshot.primary_output)) {
       if (!run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
             std::chrono::seconds {15}, *account, environment)) {
         std::cerr << "Restored layout, but temporary mode cleanup needs attention\n";
@@ -1057,7 +1072,8 @@ int main(int argc, char **argv) {
         }
       } else if (!virtual_startup) {
         std::cerr << "Refusing a display transition because display.startup_layout is invalid\n";
-      } else if (!plank::topology::valid_virtual_layout_modes(
+      } else if (pending_display_request->primary_output != -1 ||
+                 !plank::topology::valid_virtual_layout_modes(
                    pending_display_request->layout, pending_display_request->mode_1,
                    pending_display_request->mode_2)) {
         std::cerr << "Headless startup requires a qualified EDID mode\n";

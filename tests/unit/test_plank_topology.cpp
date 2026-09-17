@@ -10,7 +10,7 @@ namespace topology = plank::topology;
 
 TEST(PlankTopology, PublishesVersionThirteenFeatureContract) {
   EXPECT_EQ(topology::protocol_version, 13U);
-  EXPECT_EQ(topology::feature_flags, 0x47FFFFU);
+  EXPECT_EQ(topology::feature_flags, 0xC7FFFFU);
   EXPECT_NE(topology::feature_flags & topology::feature_nvfbc_hevc10_nvenc, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_fixed_transport_mtu, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_session_takeover, 0U);
@@ -143,4 +143,14 @@ TEST(PlankTopology, BoundedMatchedModesRequireNegotiation) {
             topology::layout_error::mismatch);
   EXPECT_EQ(topology::validate_layout_binding("single", "2056x1286", "", "single", "2056x1286", "", 1, true),
             topology::layout_error::none);
+}
+
+TEST(PlankTopology, BoundsMatchedPrimaryOutput) {
+  EXPECT_TRUE(plank::topology::valid_primary_output("physical", -1));
+  EXPECT_TRUE(plank::topology::valid_primary_output("single", 0));
+  EXPECT_TRUE(plank::topology::valid_primary_output("dual-horizontal", 1));
+  EXPECT_FALSE(plank::topology::valid_primary_output("single", 1));
+  EXPECT_FALSE(plank::topology::valid_primary_output("dual-horizontal", 2));
+  EXPECT_FALSE(plank::topology::valid_primary_output("dual-horizontal", -2));
+  EXPECT_FALSE(plank::topology::valid_primary_output("physical", 0));
 }
