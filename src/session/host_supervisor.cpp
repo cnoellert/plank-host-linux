@@ -47,6 +47,8 @@ namespace {
   constexpr std::string_view systemd_run_path = "/usr/bin/systemd-run";
   constexpr std::string_view display_prepare_path =
     "/usr/libexec/plank/plank-display-prepare";
+  constexpr std::string_view display_match_path =
+    "/usr/libexec/plank/plank-display-match";
   constexpr std::string_view xrandr_path = "/usr/bin/xrandr";
   constexpr std::string_view nvidia_settings_path = "/usr/bin/nvidia-settings";
   constexpr std::string_view display_overlay_path =
@@ -92,6 +94,7 @@ namespace {
     physical_snapshot_t snapshot;
     bool active {};
     std::chrono::steady_clock::time_point deadline;
+    std::string mode_token;  ///< Supervisor-owned identity for temporary XRandR modes.
   };
 
   std::optional<account_t> account_for_uid(uid_t uid) {
@@ -702,32 +705,6 @@ namespace {
     );
   }
 
-  std::optional<std::string> temporary_metamode(
-    const physical_snapshot_t &snapshot,
-    const plank::session::display_request_t &request
-  ) {
-    const std::size_t required_outputs =
-      request.layout == "dual-horizontal" ? 2U : 1U;
-    if (snapshot.outputs.size() < required_outputs) return std::nullopt;
-    const std::array<std::string_view, 2> modes {request.mode_1, request.mode_2};
-    std::string assignment;
-    int x = 0;
-    for (std::size_t index = 0; index < required_outputs; ++index) {
-      const auto requested = plank::topology::virtual_mode_size(modes[index]);
-      const auto &physical = snapshot.outputs[index];
-      if (requested.width <= 0 || requested.height <= 0) return std::nullopt;
-      if (!assignment.empty()) assignment += ", ";
-      assignment += physical.name + ": " + physical.mode + " @" +
-        std::to_string(requested.width) + "x" + std::to_string(requested.height) +
-        " +" + std::to_string(x) + "+0 {ViewPortIn=" +
-        std::to_string(requested.width) + "x" + std::to_string(requested.height) +
-        ", ViewPortOut=" + std::to_string(physical.native_width) + "x" +
-        std::to_string(physical.native_height) + "+0+0}";
-      x += requested.width;
-    }
-    return assignment;
-  }
-
   std::string safe_physical_metamode(const physical_snapshot_t &snapshot) {
     if (snapshot.outputs.empty()) return {};
     const auto &output = snapshot.outputs.front();
@@ -790,8 +767,18 @@ namespace {
       std::cerr << "Unable to capture the physical NVIDIA MetaMode before the PLANK session\n";
       return false;
     }
-    const auto temporary = temporary_metamode(*snapshot, lease.request);
-    if (!temporary || !assign_metamode(*temporary, *account, environment)) {
+    lease.mode_token = std::to_string(getpid()) + "-" + std::to_string(
+      std::chrono::steady_clock::now().time_since_epoch().count()
+    );
+    std::vector<std::string> arguments {"apply", lease.mode_token, lease.request.mode_1};
+    if (!lease.request.mode_2.empty()) arguments.push_back(lease.request.mode_2);
+    if (!run_bounded_user_command(display_match_path, arguments,
+          std::chrono::seconds {45}, *account, environment)) {
+      // Also recover after helper timeout/termination, where Python cannot unwind.
+      if (assign_metamode(snapshot->assignment, *account, environment)) {
+        run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
+          std::chrono::seconds {15}, *account, environment);
+      }
       std::cerr << "Unable to apply the temporary PLANK physical-display layout\n";
       return false;
     }
@@ -799,11 +786,15 @@ namespace {
           lease.request.layout, lease.request.mode_1, lease.request.mode_2,
           lease.uid
         })) {
-      assign_metamode(snapshot->assignment, *account, environment);
+      if (assign_metamode(snapshot->assignment, *account, environment)) {
+        run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
+          std::chrono::seconds {15}, *account, environment);
+      }
       std::cerr << "Unable to publish the temporary PLANK display state; restored the physical layout\n";
       return false;
     }
     lease.session_id = session.id;
+    lease.deadline = std::chrono::steady_clock::now() + std::chrono::seconds {45};
     lease.snapshot = *snapshot;
     return true;
   }
@@ -816,6 +807,10 @@ namespace {
     const auto account = account_for_uid(session.uid);
     if (!account) return false;
     if (assign_metamode(lease.snapshot.assignment, *account, environment)) {
+      if (!run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
+            std::chrono::seconds {15}, *account, environment)) {
+        std::cerr << "Restored layout, but temporary mode cleanup needs attention\n";
+      }
       clear_runtime_display_state();
       std::clog << "Restored the exact pre-session physical NVIDIA MetaMode\n";
       return true;
@@ -839,7 +834,8 @@ namespace {
     const auto account = account_for_uid(session.uid);
     const auto first = plank::topology::virtual_mode_size(request.mode_1);
     const auto second = plank::topology::virtual_mode_size(request.mode_2);
-    if (!account || first.width <= 0 || first.height <= 0 ||
+    if (!plank::topology::valid_virtual_layout_modes(request.layout, request.mode_1, request.mode_2) ||
+        !account || first.width <= 0 || first.height <= 0 ||
         (request.layout == "dual-horizontal" &&
          (second.width <= 0 || second.height <= 0))) {
       return false;
@@ -1041,13 +1037,24 @@ int main(int argc, char **argv) {
         } else if (physical_display_lease &&
                    physical_display_lease->uid != lease.uid) {
           std::cerr << "Refusing to replace a temporary display lease owned by another account\n";
-        } else if (apply_physical_lease(lease, *selected, *environment)) {
-          physical_display_lease = std::move(lease);
-          std::clog << "Temporary PLANK physical-display lease acquired for UID "
-                    << physical_display_lease->uid << '\n';
+        } else {
+          const bool restored = !physical_display_lease ||
+            restore_physical_lease(*physical_display_lease, *selected, *environment);
+          if (restored) {
+            physical_display_lease.reset();
+            if (apply_physical_lease(lease, *selected, *environment)) {
+              physical_display_lease = std::move(lease);
+              std::clog << "Temporary PLANK physical-display lease acquired for UID "
+                        << physical_display_lease->uid << '\n';
+            }
+          }
         }
       } else if (!virtual_startup) {
         std::cerr << "Refusing a display transition because display.startup_layout is invalid\n";
+      } else if (!plank::topology::valid_virtual_layout_modes(
+                   pending_display_request->layout, pending_display_request->mode_1,
+                   pending_display_request->mode_2)) {
+        std::cerr << "Headless startup requires a qualified EDID mode\n";
       } else if (selected->session_class == "greeter") {
         const auto request = std::move(*pending_display_request);
         std::clog << "Applying PLANK display transition: "

@@ -420,7 +420,7 @@ namespace plank::session {
                                                                "release";
     const bool acquire_valid = request.action != display_request_t::action_t::acquire ||
       ((request.layout == "single" || request.layout == "dual-horizontal") &&
-       plank::topology::valid_virtual_layout_modes(
+       plank::topology::valid_matched_layout_modes(
          request.layout, request.mode_1, request.mode_2
        ));
     const bool control_valid = request.action == display_request_t::action_t::acquire ||
@@ -472,7 +472,7 @@ namespace plank::session {
 
   std::string runtime_display_state_message(const runtime_display_state_t &state) {
     if ((state.layout != "single" && state.layout != "dual-horizontal") ||
-        !plank::topology::valid_virtual_layout_modes(
+        !plank::topology::valid_matched_layout_modes(
           state.layout, state.mode_1, state.mode_2
         ) || state.lease_uid == 0) {
       return {};

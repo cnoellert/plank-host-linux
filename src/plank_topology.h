@@ -30,6 +30,7 @@ namespace plank::topology {
   constexpr std::uint32_t feature_desktop_handoff_notice = 0x10000;
   constexpr std::uint32_t feature_authenticated_desktop_stage = 0x20000;
   constexpr std::uint32_t feature_worker_instance = 0x40000;
+  constexpr std::uint32_t feature_matched_display_modes = 0x400000;
   constexpr std::uint32_t feature_flags =
     feature_output_topology |
     feature_selected_output |
@@ -49,7 +50,8 @@ namespace plank::topology {
     feature_session_takeover |
     feature_desktop_handoff_notice |
     feature_authenticated_desktop_stage |
-    feature_worker_instance;
+    feature_worker_instance |
+    feature_matched_display_modes;
 
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {
     return mtu >= 1200 && mtu <= 65527;
@@ -81,6 +83,50 @@ namespace plank::topology {
     if (mode == "4096x2160") return {4096, 2160};
     if (mode == "5120x2160") return {5120, 2160};
     return {0, 0};
+  }
+
+  /**
+   * @brief Parse a canonical, bounded temporary display mode; no timing data is accepted.
+   * @param mode Requested WIDTHxHEIGHT, with even dimensions in [320,8192] x [200,8192].
+   * @return Exact dimensions, or zero dimensions for malformed/out-of-range input.
+   */
+  constexpr mode_size matched_mode_size(std::string_view mode) {
+    if (mode.size() < 7 || mode.size() > 9) return {0, 0};
+    int width = 0, height = 0;
+    bool separator = false, first = true;
+    for (const char ch : mode) {
+      if (ch == 'x' && !separator && !first) {
+        separator = true;
+        first = true;
+        continue;
+      }
+      if (ch < '0' || ch > '9' || (first && ch == '0')) return {0, 0};
+      auto &value = separator ? height : width;
+      value = value * 10 + ch - '0';
+      if (value > 8192) return {0, 0};
+      first = false;
+    }
+    if (!separator || first || width < 320 || height < 200 || width % 2 || height % 2) {
+      return {0, 0};
+    }
+    return {width, height};
+  }
+
+  /**
+   * @brief Validate a bounded one/two-output lease without broadening EDID presets.
+   * @param layout Single or horizontally joined displays.
+   * @param mode_1 First canonical mode.
+   * @param mode_2 Second canonical mode; empty for a single display.
+   * @return Whether dimensions and combined canvas fit the supported bounds.
+   */
+  constexpr bool valid_matched_layout_modes(
+    std::string_view layout, std::string_view mode_1, std::string_view mode_2
+  ) {
+    const auto first = matched_mode_size(mode_1);
+    if (layout == "single") return first.width > 0 && mode_2.empty();
+    const auto second = matched_mode_size(mode_2);
+    return layout == "dual-horizontal" && first.width > 0 && second.width > 0 &&
+      first.width + second.width <= maximum_virtual_canvas_width;
   }
 
   constexpr bool valid_layout(std::string_view layout) {
@@ -152,15 +198,18 @@ namespace plank::topology {
     std::string_view actual_layout,
     std::string_view actual_mode_1,
     std::string_view actual_mode_2,
-    std::size_t output_count
+    std::size_t output_count,
+    bool allow_matched_modes = false
   ) {
     if (!valid_layout(requested_layout) ||
         (requested_layout == "physical" &&
          (!requested_mode_1.empty() || !requested_mode_2.empty())) ||
         (requested_layout != "physical" &&
-         !valid_virtual_layout_modes(
+         !(allow_matched_modes ? valid_matched_layout_modes(
            requested_layout, requested_mode_1, requested_mode_2
-         ))) {
+         ) : valid_virtual_layout_modes(
+           requested_layout, requested_mode_1, requested_mode_2
+         )))) {
       return layout_error::invalid_request;
     }
     if (requested_layout != actual_layout ||

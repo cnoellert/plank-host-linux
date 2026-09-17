@@ -722,7 +722,9 @@ namespace nvhttp {
       actual_layout,
       actual_mode_1,
       actual_mode_2,
-      outputs.size()
+      outputs.size(),
+      live_layout.startup_kind == "physical" &&
+        (session.plank_feature_flags & plank::topology::feature_matched_display_modes) != 0
     );
     if (validation == plank::topology::layout_error::invalid_request) {
       tree.put("root.<xmlattr>.status_code", 400);
@@ -760,12 +762,12 @@ namespace nvhttp {
       return false;
     }
     if (live_layout.virtual_layout) {
-      const auto mode_1 = plank::topology::virtual_mode_size(actual_mode_1);
+      const auto mode_1 = plank::topology::matched_mode_size(actual_mode_1);
       const bool first_matches = ordered_outputs[0].get().width == mode_1.width &&
                                  ordered_outputs[0].get().height == mode_1.height;
       bool second_matches = true;
       if (actual_layout == "dual-horizontal") {
-        const auto mode_2 = plank::topology::virtual_mode_size(actual_mode_2);
+        const auto mode_2 = plank::topology::matched_mode_size(actual_mode_2);
         second_matches = ordered_outputs[1].get().width == mode_2.width &&
                          ordered_outputs[1].get().height == mode_2.height &&
                          ordered_outputs[1].get().x ==

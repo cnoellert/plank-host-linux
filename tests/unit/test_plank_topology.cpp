@@ -10,7 +10,7 @@ namespace topology = plank::topology;
 
 TEST(PlankTopology, PublishesVersionThirteenFeatureContract) {
   EXPECT_EQ(topology::protocol_version, 13U);
-  EXPECT_EQ(topology::feature_flags, 0xFFFFU);
+  EXPECT_EQ(topology::feature_flags, 0x47FFFFU);
   EXPECT_NE(topology::feature_flags & topology::feature_nvfbc_hevc10_nvenc, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_fixed_transport_mtu, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_session_takeover, 0U);
@@ -125,4 +125,22 @@ TEST(PlankTopology, RejectsInvalidAndUnhealthyLayouts) {
               "single", "1920x1080", "1280x2160",
               "single", "1920x1080", "", 1),
             topology::layout_error::invalid_request);
+}
+
+TEST(PlankTopology, BoundedMatchedModesRequireNegotiation) {
+  EXPECT_EQ(topology::matched_mode_size("4112x2572").width, 4112);
+  for (const auto mode : {"02056x1286", "2056x1287", "2056x1286\n", "8194x2160",
+                          "320x198", "320x200;id", "999999999x200", "320x", "x200"}) {
+    EXPECT_EQ(topology::matched_mode_size(mode).width, 0);
+  }
+  EXPECT_FALSE(topology::valid_virtual_mode("4112x2572"));
+  EXPECT_TRUE(topology::valid_matched_layout_modes("dual-horizontal", "4112x2572", "2560x1440"));
+  EXPECT_FALSE(topology::valid_matched_layout_modes("dual-horizontal", "5120x2160", "5120x2160"));
+  EXPECT_FALSE(topology::valid_matched_layout_modes("single", "2056x1286", "2560x1440"));
+  EXPECT_EQ(topology::validate_layout_binding("single", "2056x1286", "", "physical", "", "", 1),
+            topology::layout_error::invalid_request);
+  EXPECT_EQ(topology::validate_layout_binding("single", "2056x1286", "", "physical", "", "", 1, true),
+            topology::layout_error::mismatch);
+  EXPECT_EQ(topology::validate_layout_binding("single", "2056x1286", "", "single", "2056x1286", "", 1, true),
+            topology::layout_error::none);
 }
