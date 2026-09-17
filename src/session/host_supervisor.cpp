@@ -710,17 +710,32 @@ namespace {
     return snapshot;
   }
 
+  /**
+   * @brief Restore a saved physical MetaMode before GNOME can reuse lease modes.
+   *
+   * @param assignment Saved NVIDIA MetaMode.
+   * @param account Desktop owner used to run the display helper.
+   * @param environment Active X11 and user-session environment.
+   * @param primary_output Saved XRandR primary connector.
+   * @param mode_token Optional identity of temporary modes to remove before
+   *   recovering GNOME's logical monitor.
+   * @return True only when the helper verifies the exact restored layout.
+   */
   bool assign_metamode(
     std::string_view assignment,
     const account_t &account,
     const plank::session::environment_t &environment,
-    std::string_view primary_output = "keep"
+    std::string_view primary_output = "keep",
+    std::string_view mode_token = {}
   ) {
     // NVIDIA may return zero after rejecting an assignment. The helper reads
     // the mode and primary property back before declaring restoration complete.
+    std::vector<std::string> arguments {
+      "restore", std::string {assignment}, std::string {primary_output}
+    };
+    if (!mode_token.empty()) arguments.emplace_back(mode_token);
     return !assignment.empty() && run_bounded_user_command(
-      display_match_path,
-      {"restore", std::string {assignment}, std::string {primary_output}},
+      display_match_path, arguments,
       std::chrono::seconds {25}, account, environment
     );
   }
@@ -796,7 +811,8 @@ namespace {
     if (!run_bounded_user_command(display_match_path, arguments,
           std::chrono::seconds {45}, *account, environment)) {
       // Also recover after helper timeout/termination, where Python cannot unwind.
-      if (assign_metamode(snapshot->assignment, *account, environment, snapshot->primary_output)) {
+      if (assign_metamode(snapshot->assignment, *account, environment,
+            snapshot->primary_output, lease.mode_token)) {
         run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
           std::chrono::seconds {15}, *account, environment);
       }
@@ -807,7 +823,8 @@ namespace {
           lease.request.layout, lease.request.mode_1, lease.request.mode_2,
           lease.uid
         })) {
-      if (assign_metamode(snapshot->assignment, *account, environment, snapshot->primary_output)) {
+      if (assign_metamode(snapshot->assignment, *account, environment,
+            snapshot->primary_output, lease.mode_token)) {
         run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
           std::chrono::seconds {15}, *account, environment);
       }
@@ -827,7 +844,8 @@ namespace {
   ) {
     const auto account = account_for_uid(session.uid);
     if (!account) return false;
-    if (assign_metamode(lease.snapshot.assignment, *account, environment, lease.snapshot.primary_output)) {
+    if (assign_metamode(lease.snapshot.assignment, *account, environment,
+          lease.snapshot.primary_output, lease.mode_token)) {
       if (!run_bounded_user_command(display_match_path, {"cleanup", lease.mode_token},
             std::chrono::seconds {15}, *account, environment)) {
         std::cerr << "Restored layout, but temporary mode cleanup needs attention\n";
@@ -838,7 +856,8 @@ namespace {
     }
     const auto fallback = safe_physical_metamode(lease.snapshot);
     const bool recovered = !fallback.empty() &&
-      assign_metamode(fallback, *account, environment);
+      assign_metamode(fallback, *account, environment,
+        "keep", lease.mode_token);
     clear_runtime_display_state();
     std::cerr << "ERROR: Exact PLANK physical-display restoration failed; "
               << (recovered ? "enabled one safe native physical output" :
