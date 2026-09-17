@@ -30,8 +30,10 @@ namespace plank::topology {
   constexpr std::uint32_t feature_desktop_handoff_notice = 0x10000;
   constexpr std::uint32_t feature_authenticated_desktop_stage = 0x20000;
   constexpr std::uint32_t feature_worker_instance = 0x40000;
-  constexpr std::uint32_t feature_matched_display_modes = 0x400000;
+  constexpr std::uint32_t feature_matched_display_modes = 0x1000000;
   constexpr std::uint32_t feature_matched_primary_output = 0x800000;
+  // Clipboard synchronization owns 0x400000 in the shared feature namespace.
+  static_assert((feature_matched_display_modes & 0x400000u) == 0);
   constexpr std::uint32_t feature_flags =
     feature_output_topology |
     feature_selected_output |
