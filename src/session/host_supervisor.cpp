@@ -520,7 +520,10 @@ namespace {
       "--gid=" + std::to_string(account.gid),
       "--property=NoNewPrivileges=yes",
       "--property=ProtectSystem=strict",
-      "--property=ProtectHome=yes",
+      // Keep home directories hidden while allowing this UID's desktop bus
+      // and Xauthority. Derive the bind path from the attested UID, not env.
+      "--property=ProtectHome=tmpfs",
+      "--property=BindReadOnlyPaths=/run/user/" + std::to_string(account.uid),
       "--property=RestrictAddressFamilies=AF_UNIX",
       "--property=RuntimeMaxSec=" + std::to_string(timeout.count()) + "s",
       "--setenv=HOME=" + account.home,
@@ -555,7 +558,10 @@ namespace {
       "--gid=" + std::to_string(account.gid),
       "--property=NoNewPrivileges=yes",
       "--property=ProtectSystem=strict",
-      "--property=ProtectHome=yes",
+      // Keep home directories hidden while allowing this UID's desktop bus
+      // and Xauthority. Derive the bind path from the attested UID, not env.
+      "--property=ProtectHome=tmpfs",
+      "--property=BindReadOnlyPaths=/run/user/" + std::to_string(account.uid),
       "--property=RestrictAddressFamilies=AF_UNIX",
       "--property=RuntimeMaxSec=" + std::to_string(timeout.count()) + "s",
       "--setenv=HOME=" + account.home,
