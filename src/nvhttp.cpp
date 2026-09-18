@@ -583,11 +583,7 @@ namespace nvhttp {
       outputs.size() == 1 ? "single" :
       outputs.size() == 2 ? "dual-horizontal" : "unhealthy";
     if (result.virtual_layout) {
-      auto left_to_right = outputs;
-      std::sort(left_to_right.begin(), left_to_right.end(), [](const auto &left, const auto &right) {
-        return std::tie(left.x, left.y, left.id) < std::tie(right.x, right.y, right.id);
-      });
-      for (const auto &output : left_to_right) {
+      for (const auto &output : outputs) {
         result.virtual_modes.push_back(
           std::format("{}x{}", output.width, output.height)
         );
@@ -703,9 +699,11 @@ namespace nvhttp {
     });
 
     const auto live_layout = live_display_layout(outputs);
-    if (!plank::topology::valid_primary_binding(
-          session.host_layout, live_layout.startup_kind, session.primary_output,
-          session.plank_feature_flags)) {
+    if (!plank::topology::valid_primary_output(session.host_layout, session.primary_output) ||
+        (session.primary_output >= 0 &&
+         (live_layout.startup_kind != "physical" ||
+          !(session.plank_feature_flags & plank::topology::feature_matched_primary_output) ||
+          !(session.plank_feature_flags & plank::topology::feature_matched_display_modes)))) {
       tree.put("root.<xmlattr>.status_code", 400);
       tree.put("root.<xmlattr>.status_message", "Invalid or unnegotiated primary display binding");
       return false;
@@ -745,19 +743,8 @@ namespace nvhttp {
     const bool primary_mismatch = session.primary_output >= 0 &&
       (static_cast<std::size_t>(session.primary_output) >= ordered_outputs.size() ||
        !ordered_outputs[session.primary_output].get().primary);
-    // Flame opens on the first PLANK connector even when GNOME marks another
-    // output primary. A negotiated virtual primary therefore binds DP-0 to
-    // the requested side as well as setting XRandR's primary property.
-    const std::string_view selected_connector = session.primary_output >= 0 &&
-      static_cast<std::size_t>(session.primary_output) < ordered_outputs.size() ?
-      std::string_view {ordered_outputs[session.primary_output].get().id} : std::string_view {};
-    const bool connector_mismatch = plank::topology::primary_connector_mismatch(
-      live_layout.startup_kind, session.plank_feature_flags, session.primary_output,
-      ordered_outputs.size(), selected_connector
-    );
     if (validation == plank::topology::layout_error::mismatch ||
-        (validation == plank::topology::layout_error::none &&
-         (primary_mismatch || connector_mismatch))) {
+        (validation == plank::topology::layout_error::none && primary_mismatch)) {
       const auto transition = plank::session::request_display_transition({
         plank::session::display_request_t::action_t::acquire,
         session.host_layout, session.virtual_mode_1, session.virtual_mode_2,

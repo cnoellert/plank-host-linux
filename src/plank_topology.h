@@ -33,10 +33,8 @@ namespace plank::topology {
   constexpr std::uint32_t feature_clipboard_sync = 0x400000;
   constexpr std::uint32_t feature_matched_display_modes = 0x1000000;
   constexpr std::uint32_t feature_matched_primary_output = 0x800000;
-  constexpr std::uint32_t feature_virtual_primary_connector = 0x2000000;
   static_assert((feature_matched_display_modes & feature_clipboard_sync) == 0);
   static_assert((feature_matched_primary_output & feature_clipboard_sync) == 0);
-  static_assert((feature_virtual_primary_connector & feature_clipboard_sync) == 0);
 #if defined(__linux__) && defined(SUNSHINE_BUILD_X11)
   constexpr std::uint32_t feature_platform_clipboard_sync = feature_clipboard_sync;
 #else
@@ -64,53 +62,12 @@ namespace plank::topology {
     feature_worker_instance |
     feature_matched_display_modes |
     feature_matched_primary_output |
-    feature_virtual_primary_connector |
     feature_platform_clipboard_sync;
 
   /** @brief Validate an optional primary index in left-to-right display order. */
   constexpr bool valid_primary_output(std::string_view layout, int primary) {
     return primary == -1 || (primary == 0 && (layout == "single" || layout == "dual-horizontal")) ||
       (primary == 1 && layout == "dual-horizontal");
-  }
-
-  /**
-   * @brief Require a distinct negotiated capability before binding a virtual connector order.
-   * @param layout Requested host layout.
-   * @param startup_kind Physical or virtual boot topology.
-   * @param primary Left-to-right primary output index, or -1 for legacy behavior.
-   * @param negotiated_features Features accepted for this launch.
-   * @return Whether the requested primary binding is authorized.
-   */
-  constexpr bool valid_primary_binding(std::string_view layout, std::string_view startup_kind,
-                                       int primary, std::uint32_t negotiated_features) {
-    if (!valid_primary_output(layout, primary)) return false;
-    if (primary == -1) return true;
-    if (startup_kind == "physical") {
-      return (negotiated_features & feature_matched_primary_output) != 0 &&
-             (negotiated_features & feature_matched_display_modes) != 0;
-    }
-    return startup_kind == "single" &&
-           (negotiated_features & feature_virtual_primary_connector) != 0;
-  }
-
-  /**
-   * @brief Check the first virtual connector's identity after primary binding.
-   * @param startup_kind Concrete boot topology, not the temporary lease layout.
-   * @param negotiated_features Features accepted for this launch.
-   * @param primary Left-to-right primary output index, or -1 when unspecified.
-   * @param output_count Number of active outputs in desktop order.
-   * @param selected_connector Connector at the requested index, if present.
-   * @return Whether a virtual Host still needs its first connector reassigned.
-   */
-  constexpr bool primary_connector_mismatch(std::string_view startup_kind,
-                                             std::uint32_t negotiated_features,
-                                             int primary, std::size_t output_count,
-                                             std::string_view selected_connector) {
-    if (startup_kind != "single" ||
-        (negotiated_features & feature_virtual_primary_connector) == 0 ||
-        primary < 0) return false;
-    return static_cast<std::size_t>(primary) >= output_count ||
-           selected_connector != "x11:DP-0";
   }
 
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {
