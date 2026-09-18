@@ -162,3 +162,19 @@ TEST(PlankTopology, BoundsMatchedPrimaryOutput) {
   EXPECT_FALSE(plank::topology::valid_primary_output("dual-horizontal", -2));
   EXPECT_FALSE(plank::topology::valid_primary_output("physical", 0));
 }
+
+TEST(PlankTopology, PhysicalLeaseAcceptsNonFirstConnectorAsPrimary) {
+  constexpr auto features = topology::feature_matched_display_modes |
+                            topology::feature_matched_primary_output;
+  EXPECT_EQ(features & topology::feature_clipboard_sync, 0U);
+  EXPECT_TRUE(topology::valid_primary_output("dual-horizontal", 1));
+  EXPECT_EQ(topology::validate_layout_binding(
+              "dual-horizontal", "2056x1286", "2560x1440",
+              "dual-horizontal", "2056x1286", "2560x1440", 2, true),
+            topology::layout_error::none);
+  // The selected right-hand output can be physical DP-2. Its primary flag,
+  // rather than a DP-0 identity check, determines whether a retry is needed.
+  EXPECT_FALSE(topology::primary_output_mismatch(1, 2, true));
+  EXPECT_TRUE(topology::primary_output_mismatch(1, 2, false));
+  EXPECT_TRUE(topology::primary_output_mismatch(2, 2, true));
+}

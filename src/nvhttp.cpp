@@ -740,9 +740,12 @@ namespace nvhttp {
       tree.put("root.<xmlattr>.status_message", "Invalid PLANK host-layout binding");
       return false;
     }
-    const bool primary_mismatch = session.primary_output >= 0 &&
-      (static_cast<std::size_t>(session.primary_output) >= ordered_outputs.size() ||
-       !ordered_outputs[session.primary_output].get().primary);
+    const bool selected_is_primary = session.primary_output >= 0 &&
+      static_cast<std::size_t>(session.primary_output) < ordered_outputs.size() &&
+      ordered_outputs[session.primary_output].get().primary;
+    const bool primary_mismatch = plank::topology::primary_output_mismatch(
+      session.primary_output, ordered_outputs.size(), selected_is_primary
+    );
     if (validation == plank::topology::layout_error::mismatch ||
         (validation == plank::topology::layout_error::none && primary_mismatch)) {
       const auto transition = plank::session::request_display_transition({

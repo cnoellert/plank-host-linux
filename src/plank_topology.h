@@ -70,6 +70,19 @@ namespace plank::topology {
       (primary == 1 && layout == "dual-horizontal");
   }
 
+  /**
+   * @brief Check a selected output's primary flag without assuming connector identity.
+   * @param requested_primary Requested index in desktop left-to-right order, or -1.
+   * @param output_count Number of active outputs in that order.
+   * @param selected_is_primary Primary flag on the selected output, if present.
+   * @return Whether a display transition is needed to satisfy primary selection.
+   */
+  constexpr bool primary_output_mismatch(int requested_primary, std::size_t output_count,
+                                         bool selected_is_primary) {
+    return requested_primary >= 0 &&
+      (static_cast<std::size_t>(requested_primary) >= output_count || !selected_is_primary);
+  }
+
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {
     return mtu >= 1200 && mtu <= 65527;
   }
