@@ -881,23 +881,36 @@ namespace {
       return false;
     }
 
-    const auto layout_arguments = [&](const std::string &mode_1,
-                                      const std::string &mode_2) {
+    const auto layout_arguments = [&]() {
       const int canvas_width = first.width +
         (request.layout == "dual-horizontal" ? second.width : 0);
       const int canvas_height = request.layout == "dual-horizontal" ?
         std::max(first.height, second.height) : first.height;
+      const bool primary_on_right = request.layout == "dual-horizontal" &&
+        request.primary_output == 1;
+      const std::string left_connector = primary_on_right ? "DP-2" : "DP-0";
+      const std::string right_connector = primary_on_right ? "DP-0" : "DP-2";
       std::vector<std::string> arguments {
         "--fb", std::to_string(canvas_width) + "x" + std::to_string(canvas_height),
-        "--output", "DP-0", "--mode", mode_1, "--rate", "60",
-        "--pos", "0x0", "--primary"
+        "--output", left_connector, "--mode", request.mode_1, "--rate", "60",
+        "--pos", "0x0"
       };
+      if (primary_on_right) {
+        arguments.insert(arguments.end(), {"--set", "non-desktop", "0"});
+      } else {
+        arguments.push_back("--primary");
+      }
       if (request.layout == "dual-horizontal") {
         arguments.insert(arguments.end(), {
-          "--output", "DP-2", "--set", "non-desktop", "0",
-          "--mode", mode_2, "--rate", "60",
+          "--output", right_connector,
+          "--mode", request.mode_2, "--rate", "60",
           "--pos", std::to_string(first.width) + "x0"
         });
+        if (primary_on_right) {
+          arguments.push_back("--primary");
+        } else {
+          arguments.insert(arguments.end(), {"--set", "non-desktop", "0"});
+        }
       } else {
         arguments.insert(arguments.end(), {
           "--output", "DP-2", "--off", "--set", "non-desktop", "1"
@@ -911,7 +924,7 @@ namespace {
     // or approve an ad hoc timing.
     return run_bounded_user_command(
       xrandr_path,
-      layout_arguments(request.mode_1, request.mode_2),
+      layout_arguments(),
       std::chrono::seconds {10}, *account, environment
     );
   }
@@ -960,6 +973,10 @@ namespace {
       prepare_arguments.insert(
         prepare_arguments.end(), {"--mode-2", request.mode_2}
       );
+    }
+    if (request.primary_output >= 0) {
+      prepare_arguments.insert(prepare_arguments.end(),
+        {"--primary-output", std::to_string(request.primary_output)});
     }
     const bool prepared = run_bounded_command(
       display_prepare_path, prepare_arguments, std::chrono::seconds {15}
@@ -1091,7 +1108,9 @@ int main(int argc, char **argv) {
         }
       } else if (!virtual_startup) {
         std::cerr << "Refusing a display transition because display.startup_layout is invalid\n";
-      } else if (pending_display_request->primary_output != -1 ||
+      } else if (!plank::topology::valid_primary_output(
+                   pending_display_request->layout,
+                   pending_display_request->primary_output) ||
                  !plank::topology::valid_virtual_layout_modes(
                    pending_display_request->layout, pending_display_request->mode_1,
                    pending_display_request->mode_2)) {

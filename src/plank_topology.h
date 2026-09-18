@@ -32,6 +32,7 @@ namespace plank::topology {
   constexpr std::uint32_t feature_worker_instance = 0x40000;
   constexpr std::uint32_t feature_matched_display_modes = 0x1000000;
   constexpr std::uint32_t feature_matched_primary_output = 0x800000;
+  constexpr std::uint32_t feature_virtual_primary_connector = 0x2000000;
   // Clipboard synchronization owns 0x400000 in the shared feature namespace.
   static_assert((feature_matched_display_modes & 0x400000u) == 0);
   constexpr std::uint32_t feature_flags =
@@ -55,12 +56,33 @@ namespace plank::topology {
     feature_authenticated_desktop_stage |
     feature_worker_instance |
     feature_matched_display_modes |
-    feature_matched_primary_output;
+    feature_matched_primary_output |
+    feature_virtual_primary_connector;
 
   /** @brief Validate an optional primary index in left-to-right display order. */
   constexpr bool valid_primary_output(std::string_view layout, int primary) {
     return primary == -1 || (primary == 0 && (layout == "single" || layout == "dual-horizontal")) ||
       (primary == 1 && layout == "dual-horizontal");
+  }
+
+  /**
+   * @brief Require a distinct negotiated capability before binding a virtual connector order.
+   * @param layout Requested host layout.
+   * @param startup_kind Physical or virtual boot topology.
+   * @param primary Left-to-right primary output index, or -1 for legacy behavior.
+   * @param negotiated_features Features accepted for this launch.
+   * @return Whether the requested primary binding is authorized.
+   */
+  constexpr bool valid_primary_binding(std::string_view layout, std::string_view startup_kind,
+                                       int primary, std::uint32_t negotiated_features) {
+    if (!valid_primary_output(layout, primary)) return false;
+    if (primary == -1) return true;
+    if (startup_kind == "physical") {
+      return (negotiated_features & feature_matched_primary_output) != 0 &&
+             (negotiated_features & feature_matched_display_modes) != 0;
+    }
+    return startup_kind == "single" &&
+           (negotiated_features & feature_virtual_primary_connector) != 0;
   }
 
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {

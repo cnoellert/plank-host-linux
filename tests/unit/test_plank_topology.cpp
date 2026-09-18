@@ -10,7 +10,7 @@ namespace topology = plank::topology;
 
 TEST(PlankTopology, PublishesVersionThirteenFeatureContract) {
   EXPECT_EQ(topology::protocol_version, 13U);
-  EXPECT_EQ(topology::feature_flags, 0x187FFFFU);
+  EXPECT_EQ(topology::feature_flags, 0x387FFFFU);
   constexpr std::uint32_t clipboard_sync = 0x400000U;
   EXPECT_EQ(topology::feature_matched_display_modes & clipboard_sync, 0U);
   EXPECT_EQ(topology::feature_flags & clipboard_sync, 0U);
@@ -18,6 +18,7 @@ TEST(PlankTopology, PublishesVersionThirteenFeatureContract) {
   EXPECT_NE(topology::feature_flags & topology::feature_nvfbc_hevc10_nvenc, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_fixed_transport_mtu, 0U);
   EXPECT_NE(topology::feature_flags & topology::feature_session_takeover, 0U);
+  EXPECT_NE(topology::feature_flags & topology::feature_virtual_primary_connector, 0U);
   EXPECT_TRUE(topology::valid_virtual_mode("1024x2160"));
   EXPECT_TRUE(topology::valid_virtual_mode("2560x2160"));
   EXPECT_TRUE(topology::valid_virtual_mode("4096x2160"));
@@ -157,4 +158,27 @@ TEST(PlankTopology, BoundsMatchedPrimaryOutput) {
   EXPECT_FALSE(plank::topology::valid_primary_output("dual-horizontal", 2));
   EXPECT_FALSE(plank::topology::valid_primary_output("dual-horizontal", -2));
   EXPECT_FALSE(plank::topology::valid_primary_output("physical", 0));
+}
+
+TEST(PlankTopology, RequiresVirtualConnectorCapabilityForPrimaryBinding) {
+  using plank::topology::valid_primary_binding;
+  using plank::topology::feature_matched_display_modes;
+  using plank::topology::feature_matched_primary_output;
+  using plank::topology::feature_virtual_primary_connector;
+  EXPECT_TRUE(valid_primary_binding("dual-horizontal", "single", -1, 0));
+  EXPECT_FALSE(valid_primary_binding("dual-horizontal", "single", 1,
+                                    feature_matched_primary_output));
+  EXPECT_TRUE(valid_primary_binding("dual-horizontal", "single", 1,
+                                   feature_virtual_primary_connector));
+  EXPECT_FALSE(valid_primary_binding("dual-horizontal", "single", 2,
+                                    feature_virtual_primary_connector));
+  EXPECT_FALSE(valid_primary_binding("physical", "single", 0,
+                                    feature_virtual_primary_connector));
+  EXPECT_FALSE(valid_primary_binding("dual-horizontal", "physical", 1,
+                                    feature_virtual_primary_connector));
+  EXPECT_TRUE(valid_primary_binding("dual-horizontal", "physical", 1,
+                                   feature_matched_primary_output |
+                                   feature_matched_display_modes));
+  EXPECT_FALSE(valid_primary_binding("dual-horizontal", "physical", 1,
+                                    feature_matched_primary_output));
 }
