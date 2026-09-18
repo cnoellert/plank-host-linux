@@ -112,7 +112,9 @@ namespace stream {
       raw_hid::feedback_queue_t raw_hid_feedback_queue;
       safe::mail_raw_t::queue_t<std::vector<std::vector<std::uint8_t>>> cursor_shape_queue;
       safe::mail_raw_t::event_t<PLANK_CURSOR_POSITION_WIRE_MESSAGE> cursor_position_event;
-      safe::mail_raw_t::queue_t<std::vector<std::vector<std::uint8_t>>> clipboard_offer_queue;
+      safe::mail_raw_t::event_t<std::vector<std::vector<std::uint8_t>>> clipboard_offer_queue; ///< Latest local offer only.
+      std::vector<std::vector<std::uint8_t>> clipboard_pending; ///< Control-thread-owned in-flight offer.
+      std::size_t clipboard_next = 0; ///< First chunk not yet accepted by transport.
     } control;  ///< Native Host-to-Client event queues.
 
     std::string input_session_id;  ///< Internal desktop key retaining input devices across resume.
@@ -197,7 +199,7 @@ namespace stream {
     );
     return plank_transport_native_data_send(
       endpoint, packet.data(), packet_size
-    ) == PLANK_TRANSPORT_OK ? 0 : -1;
+    );
   }
 
   int send_host_termination(session_t *session, const std::uint32_t reason) {
@@ -849,16 +851,25 @@ namespace stream {
             }
           }
 
-          auto &clipboard_offer_queue = session->control.clipboard_offer_queue;
-          while (clipboard_offer_queue->peek()) {
-            const auto frames = clipboard_offer_queue->pop();
-            for (const auto &frame : *frames) {
-              if (send_clipboard_offer_control(session, frame)) {
-                BOOST_LOG(warning) << "Unable to send a PLANK clipboard offer chunk"sv;
-                session::stop(*session);
-                break;
-              }
+          auto &control = session->control;
+          if (auto frames = control.clipboard_offer_queue->try_pop()) {
+            control.clipboard_pending = std::move(*frames);
+            control.clipboard_next = 0;
+          }
+          // Bounded fair drain. Queue pressure is not a disconnected peer;
+          // retain precisely the unsent chunk instead of restarting a copy.
+          for (unsigned count = 0; count < 2 && control.clipboard_next < control.clipboard_pending.size(); ++count) {
+            const auto result = send_clipboard_offer_control(session, control.clipboard_pending[control.clipboard_next]);
+            if (result == PLANK_TRANSPORT_TIMEOUT) break;
+            if (result != PLANK_TRANSPORT_OK) {
+              BOOST_LOG(warning) << "Unable to send a PLANK clipboard offer chunk"sv;
+              session::stop(*session);
+              break;
             }
+            ++control.clipboard_next;
+          }
+          if (control.clipboard_next == control.clipboard_pending.size()) {
+            control.clipboard_pending.clear(); control.clipboard_next = 0;
           }
 
           ++pos;
@@ -1426,7 +1437,7 @@ namespace stream {
       session->control.cursor_position_event =
         mail->event<PLANK_CURSOR_POSITION_WIRE_MESSAGE>(mail::cursor_position);
       session->control.clipboard_offer_queue =
-        mail->queue<std::vector<std::vector<std::uint8_t>>>(mail::clipboard_offer);
+        mail->event<std::vector<std::vector<std::uint8_t>>>(mail::clipboard_offer);
 #if defined(__linux__) && defined(SUNSHINE_BUILD_X11)
       if ((launch_session.plank_feature_flags & plank::topology::feature_clipboard_sync) != 0) {
         if (auto clipboard = platf::x11::clipboard_t::make()) {

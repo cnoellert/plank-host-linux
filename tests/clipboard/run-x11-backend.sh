@@ -45,7 +45,7 @@ if [[ "${1:-}" == --negative-controls ]]; then
     -I"$scratch/baseline" -I"$repo/tests/clipboard/include" -I"$repo" \
     "$scratch/baseline/src/platform/linux/x11_clipboard.cpp" "$repo/tests/clipboard/x11-backend.cxx" \
     $(pkg-config --cflags --libs x11 xfixes) -o "$scratch/baseline-test"
-  for regression in 'destroyed requestor' 'independent selections' '150ms delayed reply' '1MiB INCR reply'; do
+  for regression in 'destroyed requestor' 'independent selections' '150ms delayed reply' '512KiB INCR reply'; do
     if "$scratch/baseline-test" "$regression" >"$scratch/negative.log" 2>&1; then
       echo "FAIL negative control unexpectedly passed: $regression" >&2
       exit 1
@@ -54,12 +54,12 @@ if [[ "${1:-}" == --negative-controls ]]; then
   done
 
   # The asynchronous backend alone is insufficient: the old worker's fixed
-  # 250 ms sleep still times out a legal 1 MiB transfer in 16 KiB chunks.
+  # 250 ms sleep still times out a legal 512 KiB transfer in 16 KiB chunks.
   "${CXX:-c++}" -std=c++17 -Wall -Wextra -Werror -DSUNSHINE_BUILD_X11 -DPLANK_CLIPBOARD_SLEEP_POLL \
     -I"$repo/tests/clipboard/include" -I"$repo" \
     "$repo/src/platform/linux/x11_clipboard.cpp" "$repo/tests/clipboard/x11-backend.cxx" \
     $(pkg-config --cflags --libs xcb x11) -o "$scratch/sleep-poll-test"
-  if "$scratch/sleep-poll-test" '1MiB INCR worker cadence' >"$scratch/negative.log" 2>&1; then
+  if "$scratch/sleep-poll-test" '512KiB INCR worker cadence' >"$scratch/negative.log" 2>&1; then
     echo 'FAIL fixed-sleep negative control unexpectedly passed' >&2
     exit 1
   fi

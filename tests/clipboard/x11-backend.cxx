@@ -171,10 +171,10 @@ void delayed_reply() {
 void incremental_reply() {
   fixture_t f;
   auto request = f.request();
-  constexpr auto limit = 1024 * 1024;
+  constexpr auto limit = 512 * 1024;
   f.begin_incr(request, limit);
   std::string expected, text;
-  for (int i = 0; i < 16; ++i) {
+  for (int i = 0; i < 8; ++i) {
     std::string part(65536, 'a' + i);
     expected += part;
     f.chunk(request, part);
@@ -188,11 +188,11 @@ void incremental_reply() {
 void incremental_worker_cadence() {
   fixture_t f;
   auto request = f.request();
-  constexpr auto limit = 1024 * 1024;
+  constexpr auto limit = 512 * 1024;
   f.begin_incr(request, limit);
   std::string expected, text;
   const auto start = std::chrono::steady_clock::now();
-  for (int i = 0; i < 64; ++i) {
+  for (int i = 0; i < 32; ++i) {
     std::string part(16384, 'a' + i % 26);
     expected += part;
     f.chunk(request, part);
@@ -264,7 +264,7 @@ void wakes_for_reply() {
 void oversized_advertisement() {
   fixture_t f;
   auto request = f.request();
-  unsigned long size = 1024 * 1024 + 1;
+  unsigned long size = 512 * 1024 + 1;
   XChangeProperty(f.display, request.requestor, request.property, f.incr, 32,
     PropModeReplace, reinterpret_cast<unsigned char *>(&size), 1);
   f.notify(request);
@@ -280,7 +280,7 @@ void incremental_overflow() {
   auto request = f.request();
   f.begin_incr(request, 0); // INCR count is a lower bound, not an allocation size.
   std::string text;
-  for (int i = 0; i < 16; ++i) {
+  for (int i = 0; i < 8; ++i) {
     f.chunk(request, std::string(65536, 'x'));
     REQUIRE(!f.poll(text));
     f.deletion(request);
@@ -334,8 +334,8 @@ int main(int argc, char **argv) {
     {"destroyed requestor", destroyed_requestor},
     {"independent selections", independent_selections},
     {"150ms delayed reply", delayed_reply},
-    {"1MiB INCR reply", incremental_reply},
-    {"1MiB INCR worker cadence", incremental_worker_cadence},
+    {"512KiB INCR reply", incremental_reply},
+    {"512KiB INCR worker cadence", incremental_worker_cadence},
     {"bounded idle wait", idle_wait_is_bounded},
     {"bounded conversion rate", conversion_rate_is_bounded},
     {"wake on delayed reply", wakes_for_reply},

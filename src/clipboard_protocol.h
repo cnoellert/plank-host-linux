@@ -17,8 +17,11 @@ extern "C" {
 }
 
 #include "utility.h"
+#include <plank_clipboard_wire.h>
 
 namespace stream::clipboard {
+  static_assert(PLANK_CLIPBOARD_MAX_TEXT_SIZE == PLANK_CLIPBOARD_TEXT_LIMIT);
+  static_assert(sizeof(PLANK_CLIPBOARD_WIRE_HEADER) == PLANK_CLIPBOARD_HEADER_BYTES);
   class inbox_t {
   public:
     void store(std::vector<std::uint8_t> text) {
@@ -42,55 +45,7 @@ namespace stream::clipboard {
   };
 
   inline bool valid_utf8(const std::uint8_t *data, std::size_t size) {
-    if (data == nullptr || size == 0) {
-      return false;
-    }
-    for (std::size_t index = 0; index < size;) {
-      const auto byte = data[index];
-      if (byte <= 0x7F) {
-        if (byte == 0) {
-          return false;
-        }
-        ++index;
-        continue;
-      }
-      const auto continuation = [&](std::size_t offset) {
-        return index + offset < size && (data[index + offset] & 0xC0) == 0x80;
-      };
-      if (byte >= 0xC2 && byte <= 0xDF) {
-        if (!continuation(1)) {
-          return false;
-        }
-        index += 2;
-        continue;
-      }
-      if (byte >= 0xE0 && byte <= 0xEF) {
-        if (!continuation(1) || !continuation(2)) {
-          return false;
-        }
-        const auto second = data[index + 1];
-        if ((byte == 0xE0 && second < 0xA0) ||
-            (byte == 0xED && second > 0x9F)) {
-          return false;
-        }
-        index += 3;
-        continue;
-      }
-      if (byte >= 0xF0 && byte <= 0xF4) {
-        if (!continuation(1) || !continuation(2) || !continuation(3)) {
-          return false;
-        }
-        const auto second = data[index + 1];
-        if ((byte == 0xF0 && second < 0x90) ||
-            (byte == 0xF4 && second > 0x8F)) {
-          return false;
-        }
-        index += 4;
-        continue;
-      }
-      return false;
-    }
-    return true;
+    return plank_clipboard_valid_text(data, size);
   }
 
   inline std::uint32_t chunk_size(const PLANK_CLIPBOARD_WIRE_HEADER &wire) {
@@ -131,41 +86,16 @@ namespace stream::clipboard {
     receive_result_t append(const std::uint8_t *payload,
                             std::size_t payload_size,
                             std::uint32_t maximum_chunk_size) {
-      if (payload == nullptr || payload_size < sizeof(PLANK_CLIPBOARD_WIRE_HEADER)) {
+      PlankClipboardChunk chunk {};
+      if (!plank_clipboard_decode(payload, payload_size, maximum_chunk_size, &chunk)) {
         reset_assembly();
         return {};
       }
-
-      PLANK_CLIPBOARD_WIRE_HEADER wire {};
-      std::memcpy(&wire, payload, sizeof(wire));
-      if (!payload_size_matches(wire, payload_size, maximum_chunk_size)) {
-        reset_assembly();
-        return {};
-      }
-
-      const auto magic = value(wire.magic);
-      const auto version = value(wire.version);
-      const auto reserved = value(wire.reserved);
-      const auto flags = value(wire.flags);
-      const auto generation = value(wire.generation);
-      const auto total_size = value(wire.totalSize);
-      const auto chunk_offset = value(wire.chunkOffset);
-      const auto current_chunk_size = value(wire.chunkSize);
-      constexpr std::uint32_t known_flags =
-        PLANK_CLIPBOARD_FLAG_FIRST_CHUNK | PLANK_CLIPBOARD_FLAG_LAST_CHUNK;
-
-      if (magic != PLANK_CLIPBOARD_WIRE_MAGIC ||
-          version != PLANK_CLIPBOARD_WIRE_VERSION ||
-          reserved != 0 ||
-          generation == 0 ||
-          (flags & ~known_flags) != 0 ||
-          total_size == 0 ||
-          total_size > PLANK_CLIPBOARD_MAX_TEXT_SIZE ||
-          chunk_offset > total_size ||
-          current_chunk_size > total_size - chunk_offset) {
-        reset_assembly();
-        return {};
-      }
+      const auto flags = chunk.flags;
+      const auto generation = chunk.generation;
+      const auto total_size = chunk.total;
+      const auto chunk_offset = chunk.offset;
+      const auto current_chunk_size = chunk.size;
 
       if (generation <= last_generation_) {
         return {receive_status_e::ignored, generation, {}};
@@ -193,7 +123,7 @@ namespace stream::clipboard {
 
       std::memcpy(
         bytes_.data() + chunk_offset,
-        payload + sizeof(wire),
+        chunk.bytes,
         current_chunk_size
       );
       next_offset_ += current_chunk_size;

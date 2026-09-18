@@ -20,7 +20,7 @@
 
 namespace platf::x11 {
   namespace {
-    constexpr std::size_t max_text_size = 1024 * 1024;
+    constexpr std::size_t max_text_size = 512 * 1024;
     constexpr auto conversion_timeout = std::chrono::seconds(5);
     constexpr auto selection_poll_interval = std::chrono::milliseconds(250);
 
