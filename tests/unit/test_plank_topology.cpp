@@ -186,3 +186,20 @@ TEST(PlankTopology, RequiresVirtualConnectorCapabilityForPrimaryBinding) {
   EXPECT_FALSE(valid_primary_binding("dual-horizontal", "physical", 1,
                                     feature_matched_primary_output));
 }
+
+TEST(PlankTopology, PhysicalLeaseKeepsItsNonFirstPrimaryConnector) {
+  constexpr auto physical_features = topology::feature_matched_display_modes |
+                                     topology::feature_matched_primary_output;
+  EXPECT_TRUE(topology::valid_primary_binding("dual-horizontal", "physical", 1,
+                                              physical_features));
+  EXPECT_EQ(topology::validate_layout_binding(
+              "dual-horizontal", "2056x1286", "2560x1440",
+              "dual-horizontal", "2056x1286", "2560x1440", 2, true),
+            topology::layout_error::none);
+  EXPECT_FALSE(topology::primary_connector_mismatch("physical", physical_features,
+                                                     1, 2, "x11:DP-2"));
+  EXPECT_TRUE(topology::primary_connector_mismatch(
+    "single", topology::feature_virtual_primary_connector, 1, 2, "x11:DP-2"));
+  EXPECT_FALSE(topology::primary_connector_mismatch(
+    "single", topology::feature_virtual_primary_connector, 1, 2, "x11:DP-0"));
+}

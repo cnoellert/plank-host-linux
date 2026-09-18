@@ -748,10 +748,13 @@ namespace nvhttp {
     // Flame opens on the first PLANK connector even when GNOME marks another
     // output primary. A negotiated virtual primary therefore binds DP-0 to
     // the requested side as well as setting XRandR's primary property.
-    const bool connector_mismatch = live_layout.virtual_layout &&
-      session.primary_output >= 0 &&
-      (static_cast<std::size_t>(session.primary_output) >= ordered_outputs.size() ||
-       ordered_outputs[session.primary_output].get().id != "x11:DP-0");
+    const std::string_view selected_connector = session.primary_output >= 0 &&
+      static_cast<std::size_t>(session.primary_output) < ordered_outputs.size() ?
+      std::string_view {ordered_outputs[session.primary_output].get().id} : std::string_view {};
+    const bool connector_mismatch = plank::topology::primary_connector_mismatch(
+      live_layout.startup_kind, session.plank_feature_flags, session.primary_output,
+      ordered_outputs.size(), selected_connector
+    );
     if (validation == plank::topology::layout_error::mismatch ||
         (validation == plank::topology::layout_error::none &&
          (primary_mismatch || connector_mismatch))) {

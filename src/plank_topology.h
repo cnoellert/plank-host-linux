@@ -93,6 +93,26 @@ namespace plank::topology {
            (negotiated_features & feature_virtual_primary_connector) != 0;
   }
 
+  /**
+   * @brief Check the first virtual connector's identity after primary binding.
+   * @param startup_kind Concrete boot topology, not the temporary lease layout.
+   * @param negotiated_features Features accepted for this launch.
+   * @param primary Left-to-right primary output index, or -1 when unspecified.
+   * @param output_count Number of active outputs in desktop order.
+   * @param selected_connector Connector at the requested index, if present.
+   * @return Whether a virtual Host still needs its first connector reassigned.
+   */
+  constexpr bool primary_connector_mismatch(std::string_view startup_kind,
+                                             std::uint32_t negotiated_features,
+                                             int primary, std::size_t output_count,
+                                             std::string_view selected_connector) {
+    if (startup_kind != "single" ||
+        (negotiated_features & feature_virtual_primary_connector) == 0 ||
+        primary < 0) return false;
+    return static_cast<std::size_t>(primary) >= output_count ||
+           selected_connector != "x11:DP-0";
+  }
+
   constexpr bool valid_quic_udp_payload_mtu(std::uint32_t mtu) {
     return mtu >= 1200 && mtu <= 65527;
   }
