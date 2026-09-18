@@ -30,11 +30,18 @@ namespace plank::topology {
   constexpr std::uint32_t feature_desktop_handoff_notice = 0x10000;
   constexpr std::uint32_t feature_authenticated_desktop_stage = 0x20000;
   constexpr std::uint32_t feature_worker_instance = 0x40000;
+  constexpr std::uint32_t feature_clipboard_sync = 0x400000;
   constexpr std::uint32_t feature_matched_display_modes = 0x1000000;
   constexpr std::uint32_t feature_matched_primary_output = 0x800000;
   constexpr std::uint32_t feature_virtual_primary_connector = 0x2000000;
-  // Clipboard synchronization owns 0x400000 in the shared feature namespace.
-  static_assert((feature_matched_display_modes & 0x400000u) == 0);
+  static_assert((feature_matched_display_modes & feature_clipboard_sync) == 0);
+  static_assert((feature_matched_primary_output & feature_clipboard_sync) == 0);
+  static_assert((feature_virtual_primary_connector & feature_clipboard_sync) == 0);
+#if defined(__linux__) && defined(SUNSHINE_BUILD_X11)
+  constexpr std::uint32_t feature_platform_clipboard_sync = feature_clipboard_sync;
+#else
+  constexpr std::uint32_t feature_platform_clipboard_sync = 0;
+#endif
   constexpr std::uint32_t feature_flags =
     feature_output_topology |
     feature_selected_output |
@@ -57,7 +64,8 @@ namespace plank::topology {
     feature_worker_instance |
     feature_matched_display_modes |
     feature_matched_primary_output |
-    feature_virtual_primary_connector;
+    feature_virtual_primary_connector |
+    feature_platform_clipboard_sync;
 
   /** @brief Validate an optional primary index in left-to-right display order. */
   constexpr bool valid_primary_output(std::string_view layout, int primary) {
