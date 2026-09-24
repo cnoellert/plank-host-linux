@@ -9,6 +9,7 @@
 #include <array>
 #include <cerrno>
 #include <cstring>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -17,9 +18,12 @@
 #include <utility>
 
 #ifdef __linux__
+  #include <dirent.h>
   #include <fcntl.h>
+  #include <linux/input.h>
   #include <linux/uhid.h>
   #include <poll.h>
+  #include <sys/ioctl.h>
   #include <unistd.h>
 #endif
 
@@ -62,7 +66,158 @@ namespace raw_hid {
       value = util::endian::little(value);
       std::memcpy(&destination, &value, sizeof(value));
     }
+
+#ifdef __linux__
+    constexpr std::size_t bits_per_long = sizeof(unsigned long) * 8;
+    constexpr std::int32_t max_mt_slots = 64;  ///< Bound on slots read from one multitouch node.
+
+    /**
+     * @brief Return whether a key reports tool proximity rather than contact.
+     *
+     * Pen, eraser and puck tool keys are proximity state owned by hid-wacom.
+     * Finger tool keys are proximity on pen and pad nodes, but on multitouch
+     * nodes they are contact counts derived from the slots.
+     *
+     * @param code Key code.
+     * @param multitouch Whether the node reports multitouch slots.
+     * @return True when the key must stay as it is.
+     */
+    bool is_proximity_key(std::uint16_t code, bool multitouch) {
+      switch (code) {
+        case BTN_TOOL_PEN:
+        case BTN_TOOL_RUBBER:
+        case BTN_TOOL_BRUSH:
+        case BTN_TOOL_PENCIL:
+        case BTN_TOOL_AIRBRUSH:
+        case BTN_TOOL_MOUSE:
+        case BTN_TOOL_LENS:
+          return true;
+        case BTN_TOOL_FINGER:
+        case BTN_TOOL_DOUBLETAP:
+        case BTN_TOOL_TRIPLETAP:
+        case BTN_TOOL_QUADTAP:
+        case BTN_TOOL_QUINTTAP:
+          return !multitouch;
+        default:
+          return false;
+      }
+    }
+
+    /**
+     * @brief Test one bit of a kernel bitmap.
+     *
+     * @param bits Bitmap returned by an evdev ioctl.
+     * @param bit Bit number.
+     * @return True when the bit is set.
+     */
+    bool test_bit(std::span<const unsigned long> bits, unsigned int bit) {
+      return bit / bits_per_long < bits.size() && ((bits[bit / bits_per_long] >> (bit % bits_per_long)) & 1UL) != 0;
+    }
+
+    /**
+     * @brief Read the input-core state that decides how to release one node.
+     *
+     * @param fd Open evdev node.
+     * @return Held keys, pressure and multitouch slots of the node.
+     */
+    input_node_state_t read_node_state(int fd) {
+      input_node_state_t state;
+
+      std::array<unsigned long, (KEY_CNT + bits_per_long - 1) / bits_per_long> keys {};
+      if (ioctl(fd, EVIOCGKEY(sizeof(keys)), keys.data()) >= 0) {
+        for (unsigned int code = 0; code < KEY_CNT; ++code) {
+          if (test_bit(keys, code)) {
+            state.held_keys.push_back(static_cast<std::uint16_t>(code));
+          }
+        }
+      }
+
+      std::array<unsigned long, (ABS_CNT + bits_per_long - 1) / bits_per_long> axes {};
+      if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(axes)), axes.data()) < 0) {
+        return state;
+      }
+      input_absinfo info {};
+      if (test_bit(axes, ABS_PRESSURE) && ioctl(fd, EVIOCGABS(ABS_PRESSURE), &info) >= 0) {
+        state.pressure = info.value;
+      }
+      if (test_bit(axes, ABS_MT_SLOT) && test_bit(axes, ABS_MT_TRACKING_ID) &&
+          ioctl(fd, EVIOCGABS(ABS_MT_SLOT), &info) >= 0 && info.maximum >= 0 && info.maximum < max_mt_slots) {
+        // EVIOCGMTSLOTS fills a u32 code followed by one s32 value per slot.
+        std::vector<std::int32_t> request(static_cast<std::size_t>(info.maximum) + 2);
+        request[0] = ABS_MT_TRACKING_ID;
+        if (ioctl(fd, EVIOCGMTSLOTS(request.size() * sizeof(std::int32_t)), request.data()) >= 0) {
+          state.mt_current_slot = info.value;
+          state.mt_tracking_ids.assign(request.begin() + 1, request.end());
+        }
+      }
+      return state;
+    }
+
+    /**
+     * @brief Inject planned release events into one evdev node.
+     *
+     * @param fd Evdev node opened for writing.
+     * @param plan Events from plan_contact_release().
+     * @return True when the kernel accepted every event.
+     */
+    bool write_release(int fd, const std::vector<release_event_t> &plan) {
+      std::vector<input_event> events(plan.size());
+      for (std::size_t index = 0; index < plan.size(); ++index) {
+        events[index].type = plan[index].type;
+        events[index].code = plan[index].code;
+        events[index].value = plan[index].value;
+      }
+      const auto size = events.size() * sizeof(input_event);
+      return write(fd, events.data(), size) == static_cast<ssize_t>(size);
+    }
+
+    /**
+     * @brief Read the physical path of one input event node from sysfs.
+     *
+     * @param event_name Node name such as `event12`.
+     * @return Physical path, or an empty string when unavailable.
+     */
+    std::string read_phys(const char *event_name) {
+      std::ifstream file {"/sys/class/input/"s + event_name + "/device/phys"};
+      std::string phys;
+      std::getline(file, phys);
+      return phys;
+    }
+#endif
   }  // namespace
+
+#ifdef __linux__
+  std::vector<release_event_t> plan_contact_release(const input_node_state_t &state) {
+    std::vector<release_event_t> events;
+    const bool multitouch = state.mt_current_slot.has_value();
+    if (multitouch) {
+      bool moved_slot = false;
+      for (std::size_t slot = 0; slot < state.mt_tracking_ids.size(); ++slot) {
+        if (state.mt_tracking_ids[slot] < 0) {
+          continue;
+        }
+        events.push_back({EV_ABS, ABS_MT_SLOT, static_cast<std::int32_t>(slot)});
+        events.push_back({EV_ABS, ABS_MT_TRACKING_ID, -1});
+        moved_slot = true;
+      }
+      if (moved_slot) {
+        events.push_back({EV_ABS, ABS_MT_SLOT, *state.mt_current_slot});
+      }
+    }
+    for (const auto code : state.held_keys) {
+      if (!is_proximity_key(code, multitouch)) {
+        events.push_back({EV_KEY, code, 0});
+      }
+    }
+    if (state.pressure.value_or(0) != 0) {
+      events.push_back({EV_ABS, ABS_PRESSURE, 0});
+    }
+    if (!events.empty()) {
+      events.push_back({EV_SYN, SYN_REPORT, 0});
+    }
+    return events;
+  }
+#endif
 
   class tablet_t::impl_t {
   public:
@@ -134,6 +289,9 @@ namespace raw_hid {
           return false;
         }
         transport_active_ = false;
+#ifdef __linux__
+        release_retained_contacts();
+#endif
         BOOST_LOG(info) << "Suspended raw HID tablet transport while retaining endpoints for generation "sv << generation_;
         return true;
       }
@@ -198,6 +356,9 @@ namespace raw_hid {
       std::lock_guard lock {mutex_};
       transport_active_ = false;
       feedback_queue_ = {};
+#ifdef __linux__
+      release_retained_contacts();
+#endif
     }
 
     /**
@@ -320,6 +481,10 @@ namespace raw_hid {
 #ifdef __linux__
       transport_active_ = true;
       const auto &device = *device_;
+      // Every interface shares one physical path so hid-wacom groups them.
+      // Retained endpoints keep it for later generations, so it is stored
+      // rather than rebuilt from generation_.
+      const std::string physical = "plank/raw-tablet/" + std::to_string(generation_);
       for (const auto &descriptor : descriptors_) {
         const int fd = open("/dev/uhid", O_RDWR | O_CLOEXEC | O_NONBLOCK);
         if (fd < 0) {
@@ -335,7 +500,6 @@ namespace raw_hid {
         uhid_event create {};
         create.type = UHID_CREATE2;
         std::memcpy(create.u.create2.name, device.name, sizeof(device.name));
-        const std::string physical = "plank/raw-tablet/" + std::to_string(generation_);
         std::memcpy(create.u.create2.phys, physical.data(), std::min(physical.size(), sizeof(create.u.create2.phys) - 1));
         std::memcpy(create.u.create2.uniq, device.unique, sizeof(device.unique));
         create.u.create2.rd_size = static_cast<std::uint16_t>(descriptor.size());
@@ -357,6 +521,7 @@ namespace raw_hid {
       }};
       retained_device_ = device_;
       retained_descriptors_ = descriptors_;
+      retained_phys_ = physical;
 #ifdef SUNSHINE_TESTS
       ++endpoint_epoch_;
 #endif
@@ -396,6 +561,51 @@ namespace raw_hid {
         close(fd);
       }
       uhid_fds_.clear();
+      retained_phys_.clear();
+    }
+
+    /**
+     * @brief End contact held on the input nodes of the retained endpoints.
+     *
+     * The endpoints and their XInput identities survive a suspend, so the
+     * kernel would otherwise keep the last reported tip, buttons, keys and
+     * touches until the next report, which then draws from the old contact
+     * point to the new one. Only releases are injected; tool proximity stays.
+     * Injection is ignored while another client holds EVIOCGRAB on a node.
+     */
+    void release_retained_contacts() {
+      if (retained_phys_.empty()) {
+        return;
+      }
+      DIR *directory = opendir("/sys/class/input");
+      if (directory == nullptr) {
+        return;
+      }
+      int released = 0;
+      while (const dirent *entry = readdir(directory)) {
+        if (std::strncmp(entry->d_name, "event", 5) != 0 || read_phys(entry->d_name) != retained_phys_) {
+          continue;
+        }
+        const std::string path = "/dev/input/"s + entry->d_name;
+        const int fd = open(path.c_str(), O_RDWR | O_CLOEXEC | O_NONBLOCK);
+        if (fd < 0) {
+          BOOST_LOG(warning) << "Raw HID tablet cannot open "sv << path << " to release contact: "sv << std::strerror(errno);
+          continue;
+        }
+        const auto plan = plan_contact_release(read_node_state(fd));
+        if (!plan.empty()) {
+          if (write_release(fd, plan)) {
+            ++released;
+          } else {
+            BOOST_LOG(warning) << "Raw HID tablet cannot release contact on "sv << path << ": "sv << std::strerror(errno);
+          }
+        }
+        close(fd);
+      }
+      closedir(directory);
+      if (released != 0) {
+        BOOST_LOG(info) << "Released held raw HID tablet contact on "sv << released << " input node(s)"sv;
+      }
     }
 
     /**
@@ -545,6 +755,7 @@ namespace raw_hid {
     std::vector<int> uhid_fds_;  ///< UHID endpoints by interface.
     std::optional<PLANK_RAW_HID_DEVICE_MESSAGE> retained_device_;  ///< Identity backing retained UHID endpoints.
     std::vector<std::vector<std::uint8_t>> retained_descriptors_;  ///< Descriptors backing retained endpoints.
+    std::string retained_phys_;  ///< Physical path shared by the retained endpoints' input nodes.
     bool transport_active_ = false;  ///< Whether the current transport may deliver tablet frames.
     bool replace_interfaces_ = false;  ///< Whether a completed attach requires endpoint replacement.
 #ifdef SUNSHINE_TESTS
