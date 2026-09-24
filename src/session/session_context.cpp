@@ -310,7 +310,9 @@ namespace plank::session {
       while (true) {
         const int status = getpwuid_r(uid, &record, buffer.data(), buffer.size(), &result);
         if (status == 0 && result != nullptr && result->pw_name != nullptr) {
-          const std::string name {result->pw_name};
+          std::string_view name {result->pw_name};
+          const auto domain = name.find('@');
+          if (domain != std::string_view::npos) name = name.substr(0, domain);
           return publishable_account_name(name) ? std::optional<std::string> {name} : std::nullopt;
         }
         if (status != ERANGE || buffer.size() >= maximum_buffer) return std::nullopt;
