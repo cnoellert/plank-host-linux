@@ -62,6 +62,9 @@ namespace session_stream {
    */
   int session_count();
 
+  /** @brief Read advisory stream occupancy without taking the session lock or running cleanup. */
+  bool has_stream_session();
+
   /**
    * @brief Check whether an accepted launch owns queued or in-flight setup.
    * @return True from HTTP acceptance until native setup succeeds or fails.

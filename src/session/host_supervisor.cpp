@@ -277,10 +277,11 @@ namespace {
   bool send_update(
     worker_t &worker,
     const plank::session::descriptor_t &session,
-    const plank::session::environment_t &environment
+    const plank::session::environment_t &environment,
+    const std::string &account_name
   ) {
     const plank::session::update_t update {
-      worker.generation + 1, session, environment
+      worker.generation + 1, session, environment, account_name
     };
     const std::string message = plank::session::session_update_message(update);
     if (message.empty()) {
@@ -301,7 +302,7 @@ namespace {
       worker.control_descriptor, reply.data(), reply.size(), 0
     );
     const std::string expected =
-      "SC-ACK-2\n" + std::to_string(update.generation) + "\nOK";
+      "SC-ACK-3\n" + std::to_string(update.generation) + "\nOK";
     if (reply_size != static_cast<ssize_t>(expected.size()) ||
         std::string_view {reply.data(), static_cast<std::size_t>(reply_size)} != expected) {
       return false;
@@ -315,7 +316,8 @@ namespace {
   worker_t launch_worker(
     const std::filesystem::path &worker,
     const plank::session::descriptor_t &session,
-    const plank::session::environment_t &environment
+    const plank::session::environment_t &environment,
+    const std::string &account_name
   ) {
     int control_sockets[2] {-1, -1};
     if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, control_sockets) != 0) {
@@ -342,7 +344,7 @@ namespace {
       return {};
     }
     worker_t result {child, control_sockets[0], {}, 0, pam_sockets[0], false};
-    if (!send_update(result, session, environment)) {
+    if (!send_update(result, session, environment, account_name)) {
       kill(child, SIGKILL);
       waitpid(child, nullptr, 0);
       close(control_sockets[0]);
@@ -1191,7 +1193,7 @@ int main(int argc, char **argv) {
           }
         }
         if (worker.pid <= 0) {
-          auto launched = launch_worker(worker_path, *selected, complete_environment);
+          auto launched = launch_worker(worker_path, *selected, complete_environment, account->name);
           if (launched.pid > 0) {
             worker = std::move(launched);
             pending_session.clear();

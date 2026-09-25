@@ -11,6 +11,7 @@ extern "C" {
 
 // standard includes
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <chrono>
 #include <optional>
@@ -77,6 +78,10 @@ namespace session_stream {
       return static_cast<int>(session_slots_->size());
     }
 
+    bool has_stream_session() const {
+      return occupied_.load(std::memory_order_relaxed);
+    }
+
     void clear(const bool all = true, const std::uint32_t termination_reason = 0) {
       auto lock = session_slots_.lock();
       for (auto iterator = session_slots_->begin();
@@ -91,6 +96,7 @@ namespace session_stream {
           }
           stream::session::join(slot);
           iterator = session_slots_->erase(iterator);
+          occupied_.store(!session_slots_->empty(), std::memory_order_relaxed);
         } else {
           ++iterator;
         }
@@ -107,11 +113,13 @@ namespace session_stream {
     void remove(const std::shared_ptr<stream::session_t> &session) {
       auto lock = session_slots_.lock();
       session_slots_->erase(session);
+      occupied_.store(!session_slots_->empty(), std::memory_order_relaxed);
     }
 
     void insert(const std::shared_ptr<stream::session_t> &session) {
       auto lock = session_slots_.lock();
       session_slots_->emplace(session);
+      occupied_.store(true, std::memory_order_relaxed);
       BOOST_LOG(info) << "New streaming session started [active sessions: "sv
                       << session_slots_->size() << ']';
     }
@@ -119,6 +127,7 @@ namespace session_stream {
     safe::event_t<std::shared_ptr<launch_session_t>> launch_event;
 
   private:
+    std::atomic_bool occupied_ {};  ///< Advisory snapshot only; never controls admission.
     sync_util::sync_t<std::set<std::shared_ptr<stream::session_t>>> session_slots_;
     // Retain ownership from HTTP acceptance through native setup. The setup
     // worker removes the request from launch_event while it waits for QUIC,
@@ -135,6 +144,10 @@ namespace session_stream {
   int session_count() {
     server.clear(false);
     return server.session_count();
+  }
+
+  bool has_stream_session() {
+    return server.has_stream_session();
   }
 
   bool launch_session_pending() {

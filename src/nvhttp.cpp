@@ -1265,6 +1265,14 @@ namespace nvhttp {
     tree.put("root.PairStatus", authorization_status);
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+    // Occupancy for the Client bookmark row. Unauthenticated polls learn
+    // whether a user desktop or live stream currently owns the Host. The
+    // account name is included only when the administrator opts in, and only
+    // as the login name of that user desktop.
+    const auto desktop = plank::session::confirmed_desktop_occupancy(config::nvhttp.publish_session_user);
+    const bool occupied = desktop.desktop_owned || session_stream::has_stream_session();
+    tree.put("root.PlankOccupied", occupied ? 1 : 0);
+    if (desktop.account_name) tree.put("root.PlankSessionUser", *desktop.account_name);
 
     std::ostringstream data;
 
