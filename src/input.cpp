@@ -293,7 +293,9 @@ namespace input {
    * normalized fallback present beside an exact raw Wacom device can make
    * Flame configure the inactive fallback while pressure arrives from the raw
    * device. Suspended raw endpoints still own tablet identity and therefore
-   * continue to suppress the fallback.
+   * continue to suppress the fallback. A generic pen is created only when a
+   * normalized pen packet arrives, so a raw-HID session never presents a
+   * temporary tablet to the desktop.
    *
    * @param input Retained per-client input state.
    */
@@ -303,12 +305,14 @@ namespace input {
       return;
     }
 
-    platf::set_normalized_pen_enabled(input->client_context.get(), !raw_hid_owns_tablet);
+    if (raw_hid_owns_tablet) {
+      platf::set_normalized_pen_enabled(input->client_context.get(), false);
+    }
     input->raw_hid_owns_tablet = raw_hid_owns_tablet;
     if (raw_hid_owns_tablet) {
-      BOOST_LOG(info) << "Exact raw HID tablet active; removed normalized pen fallback"sv;
+      BOOST_LOG(info) << "Exact raw HID tablet active; normalized pen fallback suppressed"sv;
     } else {
-      BOOST_LOG(info) << "Exact raw HID tablet detached; restored normalized pen fallback"sv;
+      BOOST_LOG(info) << "Exact raw HID tablet detached; normalized pen fallback available on demand"sv;
     }
   }
 
@@ -322,13 +326,15 @@ namespace input {
    * and restores the generic pen before the packet is delivered.
    */
   void select_normalized_pen_backend(const std::shared_ptr<input_t> &input) {
-    if (!input->raw_hid_tablet->has_endpoints()) {
-      return;
+    if (input->raw_hid_tablet->has_endpoints()) {
+      input->raw_hid_tablet->reset();
+      sync_tablet_backend(input);
+      BOOST_LOG(info) << "Normalized pen transport selected; released retained exact raw HID tablet endpoints"sv;
     }
-
-    input->raw_hid_tablet->reset();
-    sync_tablet_backend(input);
-    BOOST_LOG(info) << "Normalized pen transport selected; released retained exact raw HID tablet endpoints"sv;
+    if (!platf::normalized_pen_enabled(input->client_context.get())) {
+      platf::set_normalized_pen_enabled(input->client_context.get(), true);
+      BOOST_LOG(info) << "Created normalized pen tablet for explicit pen input"sv;
+    }
   }
 
   /**

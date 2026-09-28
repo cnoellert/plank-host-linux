@@ -187,6 +187,19 @@ TEST_F(InputRetainedSessionTest, LeftButtonReleaseIsImmediateAndNotRepeatedOnDis
   EXPECT_EQ(mouse->submit_count(), before_press + 2);
 }
 
+TEST_F(InputRetainedSessionTest, MouseInputDoesNotCreateTemporaryTablet) {
+  std::uint64_t connection_id = 0;
+  auto session = allocate("mouse-before-tablet", connection_id);
+  EXPECT_FALSE(input::testing::normalized_pen_enabled(session));
+
+  input::testing::handle_mouse_button(session, 1, false);
+  input::testing::handle_mouse_button(session, 1, true);
+  EXPECT_FALSE(input::testing::normalized_pen_enabled(session));
+
+  input::testing::select_normalized_pen(session);
+  EXPECT_TRUE(input::testing::normalized_pen_enabled(session));
+}
+
 TEST_F(InputRetainedSessionTest, RepeatedDisconnectDoesNotDuplicateButtonRelease) {
   std::uint64_t connection_id = 0;
   auto session = allocate("repeat-cleanup", connection_id);
@@ -345,15 +358,14 @@ TEST_F(InputRetainedSessionTest, ExactRawTabletSuppressesNormalizedFallbackUntil
   const std::string session_id = "exclusive-raw-tablet";
   std::uint64_t connection_id = 0;
   auto session = allocate(session_id, connection_id);
-  ASSERT_TRUE(input::testing::normalized_pen_enabled(session));
+  ASSERT_FALSE(input::testing::normalized_pen_enabled(session));
 
   constexpr std::uint16_t generation = 11;
   ASSERT_TRUE(input::testing::handle_raw_hid(session, make_raw_hid_device_frame(generation, 0x0358)));
-  EXPECT_TRUE(input::testing::normalized_pen_enabled(session));
+  EXPECT_FALSE(input::testing::normalized_pen_enabled(session));
 
-  // Minimal valid HID application collection. Backend ownership changes from
-  // the generic fallback to raw HID only after all descriptors are accepted
-  // and exact UHID endpoints exist.
+  // Minimal valid HID application collection. Raw HID owns the tablet only
+  // after all descriptors are accepted and exact UHID endpoints exist.
   const std::uint8_t descriptor[] {
     0x05, 0x01,  // Usage Page (Generic Desktop)
     0x09, 0x02,  // Usage (Mouse)
@@ -385,6 +397,9 @@ TEST_F(InputRetainedSessionTest, ExactRawTabletSuppressesNormalizedFallbackUntil
                                                         nullptr,
                                                         0
                                                       )));
+  EXPECT_FALSE(input::testing::normalized_pen_enabled(session));
+
+  input::testing::select_normalized_pen(session);
   EXPECT_TRUE(input::testing::normalized_pen_enabled(session));
 }
 

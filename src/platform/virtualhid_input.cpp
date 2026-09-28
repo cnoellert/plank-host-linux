@@ -130,9 +130,7 @@ namespace platf::virtualhid {
   }
 
   client_context_t::client_context_t(input_context_t &input):
-      global {&input} {
-    set_pen_tablet_enabled(*this, true);
-  }
+      global {&input} {}
 
   void set_pen_tablet_enabled(client_context_t &context, const bool enabled) {
     if (!enabled) {

@@ -60,8 +60,9 @@ namespace platf::virtualhid {
    * @brief Enable or remove the normalized pen-tablet fallback.
    *
    * Exact raw-HID tablet forwarding must be the only tablet exposed while it
-   * owns the physical device. The normalized device is recreated when raw
-   * forwarding is unavailable or explicitly detached.
+   * owns the physical device. The normalized device is created on the first
+   * normalized pen packet rather than at session startup, so raw attachment
+   * does not replace a temporary tablet in the X11 desktop.
    *
    * @param context Per-client virtual input context.
    * @param enabled Whether the normalized fallback should exist.
