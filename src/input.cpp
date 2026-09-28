@@ -333,7 +333,9 @@ namespace input {
     }
     if (!platf::normalized_pen_enabled(input->client_context.get())) {
       platf::set_normalized_pen_enabled(input->client_context.get(), true);
-      BOOST_LOG(info) << "Created normalized pen tablet for explicit pen input"sv;
+      if (platf::normalized_pen_enabled(input->client_context.get())) {
+        BOOST_LOG(info) << "Created normalized pen tablet for explicit pen input"sv;
+      }
     }
   }
 
