@@ -559,12 +559,12 @@ namespace stream {
 
     egl::cursor_t image {};
     unsigned long queued_serial = std::numeric_limits<unsigned long>::max();
-    if (!cursor->capture(image) ||
-        !queue_cursor_shape(session, image, queued_serial)) {
-      BOOST_LOG(error) << "Unable to capture the initial X11 cursor through XFixes"sv;
-      session::stop(*session);
-      return;
-    }
+    // XFixes can briefly fail to supply an image while the pointer changes
+    // windows. Keep the last valid cursor and retry without terminating the
+    // desktop's video and input channels.
+    bool shape_refresh_pending = true;
+    auto next_shape_retry = std::chrono::steady_clock::time_point::min();
+    auto next_shape_warning = std::chrono::steady_clock::time_point::min();
 
     BOOST_LOG(info) << "PLANK cursor position uses fixed-deadline XQueryPointer sampling; cursor shape uses XFixes notifications"sv;
     std::uint64_t position_sequence = 0;
@@ -587,12 +587,21 @@ namespace stream {
         session::stop(*session);
         return;
       }
-      if (shape_status > 0 &&
-          (!cursor->capture(image) ||
-           !queue_cursor_shape(session, image, queued_serial))) {
-        BOOST_LOG(error) << "Unable to refresh the active X11 cursor through XFixes"sv;
-        session::stop(*session);
-        return;
+      if (shape_status > 0) {
+        shape_refresh_pending = true;
+      }
+      const auto shape_now = std::chrono::steady_clock::now();
+      if (shape_refresh_pending && shape_now >= next_shape_retry) {
+        if (cursor->capture(image) &&
+            queue_cursor_shape(session, image, queued_serial)) {
+          shape_refresh_pending = false;
+        } else {
+          if (shape_now >= next_shape_warning) {
+            BOOST_LOG(warning) << "X11 cursor image unavailable; retrying without stopping the PLANK session"sv;
+            next_shape_warning = shape_now + 5s;
+          }
+          next_shape_retry = shape_now + 500ms;
+        }
       }
 
       next_cursor_sample += cursor_sample_period;
