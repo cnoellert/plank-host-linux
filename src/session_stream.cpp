@@ -264,12 +264,13 @@ namespace session_stream {
       config.audio.packetDuration = audio_request.value("packet_duration_ms", 5);
       high_quality_audio = audio_request.value("high_quality", false);
       if (request.contains("tangent")) {
-        tangent_version = request.at("tangent").at("version").get<unsigned int>();
-        if (tangent_version != 1) {
+        const auto &version = request.at("tangent").at("version");
+        if (!version.is_number_integer() || version != 1) {
           result.status = PLANK_TRANSPORT_SETUP_STATUS_UNSUPPORTED;
           result.message = "Unsupported Tangent panel protocol";
           return result;
         }
+        tangent_version = 1;
       }
     } catch (const nlohmann::json::exception &) {
       result.status = PLANK_TRANSPORT_SETUP_STATUS_INVALID_REQUEST;
