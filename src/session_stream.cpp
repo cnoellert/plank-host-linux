@@ -467,7 +467,8 @@ namespace session_stream {
     // A missing driver or peripheral failure never rejects desktop streaming.
     if (tangent_version == 1) {
       const bool enabled = plank_transport_native_tangent_host_enable(
-        plank_transport_endpoint, tangent_version
+        plank_transport_endpoint, tangent_version,
+        [](const char *message) { BOOST_LOG(warning) << message; }
       ) == PLANK_TRANSPORT_OK;
       result.response["tangent"] = {{"version", enabled ? 1 : 0}};
       BOOST_LOG(info) << "Tangent panel forwarding "sv << (enabled ? "enabled"sv : "unavailable"sv);
