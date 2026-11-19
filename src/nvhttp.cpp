@@ -1219,6 +1219,9 @@ namespace nvhttp {
     tree.put("root.PlankWorkerInstance", worker_instance_id());
     tree.put("root.PlankTopologyVersion", plank_topology_version);
     tree.put("root.PlankFeatureFlags", plank_topology_features);
+#ifdef PLANK_TRANSPORT
+    tree.put("root.PlankTangentVersion", plank_transport_native_tangent_host_available() ? 1 : 0);
+#endif
     // Public UI hint only; authenticated topology still enforces allowed layouts.
     tree.put("root.PlankDisplayPolicyVersion", 1);
     tree.put("root.PlankDisplayPolicy", config::sunshine.startup_layout);
