@@ -510,6 +510,14 @@ namespace session_stream {
       return;
     }
 
+    std::uint64_t receive_requested {}, receive_reported {};
+    if (plank_transport_native_endpoint_udp_receive_buffer(
+          endpoint, &receive_requested, &receive_reported
+        ) == PLANK_TRANSPORT_OK) {
+      BOOST_LOG(info) << "QUIC UDP receive buffer: requested bytes="sv << receive_requested
+                      << " OS-reported bytes="sv << receive_reported;
+    }
+
     std::vector<std::uint8_t> packet(PLANK_TRANSPORT_SETUP_MAX_PACKET_SIZE);
     std::size_t packet_size {};
     const auto receive_result = plank_transport_native_data_receive(
