@@ -241,7 +241,7 @@ namespace session_stream {
     int encoder_target_kbps {};
     std::uint32_t requested_video_format {};
     bool high_quality_audio {};
-    unsigned int tangent_version {};
+    unsigned int tangent_profile {};
     try {
       const auto &video_request = request.at("video");
       const auto &audio_request = request.at("audio");
@@ -270,7 +270,8 @@ namespace session_stream {
           result.message = "Unsupported Tangent panel protocol";
           return result;
         }
-        tangent_version = 1;
+        tangent_profile = request.at("tangent").value("element_series", false) ?
+            PLANK_TANGENT_PROFILE_ELEMENT : PLANK_TANGENT_PROFILE_MF;
       }
     } catch (const nlohmann::json::exception &) {
       result.status = PLANK_TRANSPORT_SETUP_STATUS_INVALID_REQUEST;
@@ -465,12 +466,15 @@ namespace session_stream {
     }
     // The optional USB lane is enabled only after authenticated session launch.
     // A missing driver or peripheral failure never rejects desktop streaming.
-    if (tangent_version == 1) {
+    if (tangent_profile) {
       const bool enabled = plank_transport_native_tangent_host_enable(
-        plank_transport_endpoint, tangent_version,
+        plank_transport_endpoint, tangent_profile,
         [](const char *message) { BOOST_LOG(warning) << message; }
       ) == PLANK_TRANSPORT_OK;
       result.response["tangent"] = {{"version", enabled ? 1 : 0}};
+      if (enabled && tangent_profile == PLANK_TANGENT_PROFILE_ELEMENT) {
+        result.response["tangent"]["element_series"] = true;
+      }
       BOOST_LOG(info) << "Tangent panel forwarding "sv << (enabled ? "enabled"sv : "unavailable"sv);
     }
     BOOST_LOG(info) << "Native QUIC session negotiated: "sv
