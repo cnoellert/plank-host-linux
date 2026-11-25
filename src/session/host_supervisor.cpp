@@ -4,6 +4,7 @@
  */
 #include "session_context.h"
 #include "worker_control.h"
+#include "virtual_display_transition.h"
 #include "../plank_topology.h"
 #include "../auth/pam_broker_channel.h"
 
@@ -833,6 +834,53 @@ namespace {
     return recovered;
   }
 
+  /** @brief Bind a live change to the active desktop and the existing X server. */
+  struct live_display_authority_t {
+    std::string socket_path;
+    struct stat socket {}, authority {};
+  };
+
+  /** @brief Capture local X socket and authority-file identities without reading cookies. */
+  std::optional<live_display_authority_t> capture_live_display_authority(
+    const plank::session::environment_t &environment
+  ) {
+    static const std::regex local_display {R"(^:([0-9]{1,5})(\.[0-9]+)?$)"};
+    std::smatch match;
+    if (!std::regex_match(environment.display, match, local_display)) return std::nullopt;
+    live_display_authority_t result;
+    result.socket_path = "/tmp/.X11-unix/X" + match[1].str();
+    if (lstat(result.socket_path.c_str(), &result.socket) != 0 ||
+        !S_ISSOCK(result.socket.st_mode) ||
+        stat(environment.xauthority.c_str(), &result.authority) != 0 ||
+        !S_ISREG(result.authority.st_mode)) return std::nullopt;
+    return result;
+  }
+
+  /** @brief Reject a new login, X server, or replaced/rewritten authentication file. */
+  bool live_display_authority_matches(
+    const live_display_authority_t &expected,
+    const plank::session::descriptor_t &session,
+    const plank::session::environment_t &environment
+  ) {
+    const auto active = plank::session::active_seat0_graphical_session();
+    if (!active || active->id != session.id || active->uid != session.uid ||
+        active->session_class != "user") return false;
+    const auto current_environment = plank::session::discover_environment(*active);
+    if (!current_environment || current_environment->display != environment.display ||
+        current_environment->xauthority != environment.xauthority ||
+        current_environment->runtime_directory != environment.runtime_directory) return false;
+    const auto current = capture_live_display_authority(*current_environment);
+    const auto same_file = [](const struct stat &a, const struct stat &b) {
+      return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_uid == b.st_uid &&
+             a.st_mode == b.st_mode && a.st_size == b.st_size &&
+             a.st_ctim.tv_sec == b.st_ctim.tv_sec && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
+    };
+    return current && current->socket_path == expected.socket_path &&
+           same_file(current->socket, expected.socket) &&
+           same_file(current->authority, expected.authority);
+  }
+
+  /** @brief Apply a qualified virtual layout, restoring the observed layout on failure. */
   bool apply_live_display_transition(
     const plank::session::display_request_t &request,
     const plank::session::descriptor_t &session,
@@ -885,14 +933,50 @@ namespace {
       return arguments;
     };
 
-    // Every qualified mode is part of each virtual monitor's EDID. NVIDIA
-    // validates this pool at Xorg startup, so live transitions never inject
-    // or approve an ad hoc timing.
-    return run_bounded_user_command(
-      xrandr_path,
-      layout_arguments(),
-      std::chrono::seconds {10}, *account, environment
+    namespace display = plank::session::virtual_display;
+    const auto authority = capture_live_display_authority(environment);
+    if (!authority) {
+      std::cerr << "Refusing live PLANK display change: X-server identity unavailable\n";
+      return false;
+    }
+    const auto outcome = display::transition(
+      [&] { return live_display_authority_matches(*authority, session, environment); },
+      [&]() -> std::optional<display::snapshot_t> {
+        const auto response = run_bounded_user_command_capture(
+          xrandr_path, {"--current", "--prop"}, std::chrono::seconds {10}, *account, environment
+        );
+        return response ? display::parse(*response) : std::nullopt;
+      },
+      [&] {
+        // Every qualified timing is already in the virtual monitors' EDIDs.
+        return run_bounded_user_command(
+          xrandr_path, layout_arguments(), std::chrono::seconds {10}, *account, environment
+        );
+      },
+      [&](const display::snapshot_t &observed) {
+        return display::matches_request(observed, request.layout, request.mode_1,
+                                        request.mode_2, request.primary_output);
+      },
+      [&](const std::vector<std::string> &arguments) {
+        return run_bounded_user_command(
+          xrandr_path, arguments, std::chrono::seconds {10}, *account, environment
+        );
+      }
     );
+    switch (outcome) {
+      case display::result_t::applied: return true;
+      case display::result_t::no_snapshot:
+        std::cerr << "Refusing live PLANK display change: no restorable virtual layout\n"; break;
+      case display::result_t::ownership_changed:
+        std::cerr << "PLANK display session changed; stale layout restoration refused\n"; break;
+      case display::result_t::scope_changed:
+        std::cerr << "PLANK display identities changed; stale layout restoration refused\n"; break;
+      case display::result_t::restored:
+        std::cerr << "PLANK display change failed; previous virtual layout restored and verified\n"; break;
+      case display::result_t::restore_failed:
+        std::cerr << "ERROR: PLANK display change failed; previous layout could not be restored and verified\n"; break;
+    }
+    return false;
   }
 
   std::optional<bool> overlay_secondary_visibility() {
