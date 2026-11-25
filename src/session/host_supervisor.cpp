@@ -1104,8 +1104,10 @@ int main(int argc, char **argv) {
     plank::session::read_runtime_display_state(
       runtime_display_state_path
     ).has_value();
-  std::optional<bool> desired_secondary_visibility =
-    virtual_startup ? overlay_secondary_visibility() : std::nullopt;
+  std::optional<bool> desired_secondary_visibility;
+  if (virtual_startup) {
+    desired_secondary_visibility = overlay_secondary_visibility();
+  }
   bool initial_secondary_visibility = desired_secondary_visibility.has_value();
   std::string visibility_session_id;
   auto display_request_deadline = std::chrono::steady_clock::time_point::max();
