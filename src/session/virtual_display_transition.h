@@ -163,7 +163,10 @@ namespace plank::session::virtual_display {
     if (active == 1 && (first->x != 0 || second->primary || second->non_desktop != 1)) return false;
     if (active == 2 && !((first->x == 0 && second->x == first->width) ||
                         (second->x == 0 && first->x == second->width))) return false;
-    return right == snapshot.width && height == snapshot.height;
+    // Xorg's configured virtual framebuffer may exceed the active modes.
+    // Preserve that observed size for rollback; a requested result is stricter.
+    return right <= snapshot.width && height <= snapshot.height &&
+           snapshot.width <= topology::maximum_virtual_canvas_width && snapshot.height <= 2160;
   }
 
   /** @brief Reject connector/EDID changes and any unrelated-output alteration. */
@@ -202,6 +205,9 @@ namespace plank::session::virtual_display {
     if (!usable(snapshot) || !topology::valid_virtual_layout_modes(layout, mode_1, mode_2) ||
         !topology::valid_primary_output(layout, primary)) return false;
     const bool dual = layout == "dual-horizontal", right = dual && primary == 1;
+    const auto first = topology::virtual_mode_size(mode_1), second = topology::virtual_mode_size(mode_2);
+    if (snapshot.width != first.width + (dual ? second.width : 0) ||
+        snapshot.height != (dual ? std::max(first.height, second.height) : first.height)) return false;
     const auto left_output = find(snapshot, right ? "DP-2" : "DP-0");
     const auto right_output = find(snapshot, right ? "DP-0" : "DP-2");
     if (left_output->mode != mode_1 || left_output->x != 0 || std::stod(left_output->rate) != 60) return false;
